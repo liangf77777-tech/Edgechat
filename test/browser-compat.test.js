@@ -207,6 +207,9 @@ test('启动期异常会渲染可见错误卡片，而不是留下白屏', () =>
   const second = createLegacySandbox();
   vm.runInContext(compatSource, second.context);
   second.appEl.innerHTML = '<div>chat</div>';
+  // 判据已改为「可见元素或真实文字」：真实 DOM 里已挂载的界面同时具备两者，
+  // 桩环境没有 getBoundingClientRect 的元素集合，所以补上 textContent。
+  second.appEl.textContent = 'chat';
   for (const fn of second.listeners.error || []) fn({ message: 'late error' });
   second.flushTimers();
   assert.equal(second.bodyEl.children.length, 0, '已挂载成功时不应再插入提示');
