@@ -48,8 +48,10 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.4.11",
 		"@capacitor/cli": "^8.5.1",
+		"@vitejs/plugin-legacy": "^8.2.4",
 		"@vitejs/plugin-vue": "^6.0.8",
 		"sql.js": "1.14.2",
+		"terser": "^5.51.2",
 		"vite": "^8.2.1",
 		"wrangler": "^4.11.1"
 	},

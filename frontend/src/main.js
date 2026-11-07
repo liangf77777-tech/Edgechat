@@ -79,14 +79,49 @@ safeRun('custom-background', () => {
   if (customBg) document.body.style.background = customBg;
 });
 
+function reportRenderError(error, info) {
+  const message = error && error.message ? error.message : String(error);
+  safeRun('report-render-error', () => {
+    const compat = window.EdgeChatCompat;
+    if (compat && typeof compat.reportFatal === 'function') {
+      compat.reportFatal('界面渲染失败（' + info + '）：' + message, true);
+    }
+  });
+  if (typeof console !== 'undefined' && typeof console.error === 'function') {
+    console.error('[edgechat] 渲染错误：', error, info);
+  }
+}
+
 function mountApp() {
   // 先让界面出来，再挂增强能力。顺序很关键：任何增强抛错都不会留下白屏。
   safeRun('store-initialize', () => store.initialize());
 
   const app = createApp(App);
   app.use(router);
-  app.mount('#app');
+  // Vue 内部捕获的渲染/生命周期错误不会触发 window 的 error 事件，
+  // 过去表现为「界面莫名其妙空白且没有任何提示」，这里统一上报给兼容层。
+  app.config.errorHandler = reportRenderError;
 
+  // 关键：等路由解析完成再挂载。
+  // app.use(router) 后初始导航是异步的，RouterView 在路由未解析前渲染空树；
+  // 弱网手机上这段窗口能有数秒，用户看到的就是「加载中闪一下，然后白屏」。
+  // 最多等 6 秒就照常挂载，避免守卫卡在慢请求上导致永久停在加载页。
+  const routeReady = Promise.resolve()
+    .then(() => router.isReady())
+    .catch(() => undefined);
+  const readyTimeout = new Promise((resolve) => {
+    setTimeout(resolve, 6000);
+  });
+
+  Promise.race([routeReady, readyTimeout])
+    .catch(() => undefined)
+    .then(() => {
+      safeRun('mount', () => app.mount('#app'));
+      afterMount(app);
+    });
+}
+
+function afterMount(app) {
   const disposeLiquidGlass = safeRun('liquid-glass', initLiquidGlass) || noop;
   app.onUnmount(() => {
     safeRun('dispose-liquid-glass', disposeLiquidGlass);

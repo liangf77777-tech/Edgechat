@@ -55,13 +55,14 @@ function routeGuard(store) {
 test('the entry point mounts the application while authentication is still pending', async () => {
   const calls = [];
   runInNewContext(withoutImports(read('main.js')), {
-    window: {}, navigator: {}, document: {}, App: {}, router: {},
+    window: {}, navigator: {}, document: {}, App: {}, router: { isReady: () => Promise.resolve() },
     Capacitor: { isNativePlatform: () => false },
     localStorage: { getItem: () => null },
     installChunkLoadRecovery() {}, takeNotificationRoomTarget: () => null,
     initializeI18n: () => Promise.resolve(),
     store: { initialize() { calls.push('initialize'); return new Promise(() => {}); } },
-    createApp: () => ({ onUnmount() {}, use() { calls.push('router'); }, mount() { calls.push('mount'); } }),
+    // config 是真实 Vue app 的一等属性；入口会在这里挂 errorHandler。
+    createApp: () => ({ config: {}, onUnmount() {}, use() { calls.push('router'); }, mount() { calls.push('mount'); } }),
     installCapacitorIntegration() {}, initLiquidGlass() {}, initVisualEffects() {}
   });
   await flush();

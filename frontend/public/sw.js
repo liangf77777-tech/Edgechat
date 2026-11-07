@@ -9,7 +9,38 @@ self.addEventListener('install', () => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      // 历史版本的缓存一律清掉：旧 SW 曾经缓存过带 hash 的旧资源，
+      // 换版后这些文件已从服务器删除，命中旧缓存会让整页加载失败、白屏。
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((key) => caches.delete(key)));
+      } catch {
+        // Cache Storage 不可用时忽略。
+      }
+      await self.clients.claim();
+    })(),
+  );
+});
+
+// 允许页面请求一键清理（兼容层的「清除缓存并重新加载」会用到）。
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'edgechat:purge') {
+    event.waitUntil(
+      (async () => {
+        try {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+        } catch {
+          // 忽略。
+        }
+        if (event.source && typeof event.source.postMessage === 'function') {
+          event.source.postMessage({ type: 'edgechat:purged' });
+        }
+      })(),
+    );
+  }
 });
 
 // Keep a fetch listener (older Chrome still requires one for the install

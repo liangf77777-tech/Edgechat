@@ -5,13 +5,34 @@ import { build } from 'vite';
 import { analyzeFrontendBundle } from '../frontend/bundle-analysis.js';
 
 let analysis;
+let legacyFiles = [];
 before(async () => {
   const result = await build({
     configFile: fileURLToPath(new URL('../frontend/vite.config.js', import.meta.url)),
     logLevel: 'silent',
     build: { write: false }
   });
-  analysis = analyzeFrontendBundle(result.output);
+  // legacy 备份包让构建产生第二批产物（含 -legacy- 分块）。
+  // 首屏预算只应计量现代产物：nomodule 分块只有老内核才下载；
+  // 同时 legacy 分块与现代表达同一页面，混在一起会让 chunkFor 命中错的那份。
+  const outputs = (Array.isArray(result) ? result : [result]).flatMap((item) => item.output || []);
+  legacyFiles = outputs.filter((file) => /-legacy-/.test(file.fileName));
+  analysis = analyzeFrontendBundle(outputs.filter((file) => !/-legacy-/.test(file.fileName)));
+});
+
+test('legacy 备份包为老内核产出独立的 nomodule 分块', () => {
+  assert.ok(
+    legacyFiles.some((file) => /(?:^|\/)index-legacy-/.test(file.fileName)),
+    '必须有 legacy 入口分块，否则不支持 ES Module 的内核无法启动'
+  );
+  assert.ok(
+    legacyFiles.some((file) => /ChatPage-legacy-/.test(file.fileName)),
+    '聊天页也必须有 legacy 分块'
+  );
+  assert.ok(
+    legacyFiles.some((file) => /polyfills-legacy-/.test(file.fileName)),
+    '必须有 SystemJS 运行时分块'
+  );
 });
 
 test('login/chat first screens exclude admin, settings, contacts, dialogs and Vditor code', () => {

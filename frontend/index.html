@@ -34,7 +34,15 @@
         </filter>
       </defs>
     </svg>
-    <div id="app"></div>
+    <div id="app">
+      <!-- 静态首屏占位：内联样式，不依赖任何 CSS/JS 资源，HTML 一到就能画出来。
+           过去 #app 是空的，Vue 挂载前（弱网下可能好几秒）整页纯白，
+           用户看到的就是「闪一下读取中然后白屏」。Vue 挂载时会整体替换。 -->
+      <div
+        id="boot-splash"
+        style="position:fixed;left:0;top:0;right:0;bottom:0;z-index:2147483000;display:grid;place-items:center;background:#fefdf8;color:#52606d;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-text-size-adjust:100%"
+      >加载中…</div>
+    </div>
     <noscript>
       <div style="padding:24px;font:16px/1.6 sans-serif;color:#1f2933">
         需要启用 JavaScript 才能使用 Edgechat。请在浏览器设置中开启后重新加载。

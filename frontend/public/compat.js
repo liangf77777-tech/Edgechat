@@ -307,11 +307,96 @@
    * ------------------------------------------------------------------ */
   var noticeShown = false;
 
-  function showBootNotice(title, detail) {
+  // 界面是否真的画出来了。#boot-splash 是 index.html 里的静态占位，
+  // Vue 挂载时会被整体替换掉，所以「还看得到它」等于「Vue 尚未接管」。
+  //
+  // 关键：不能量 #app 自己的盒子。聊天页根节点 .chat-layout 是 position:fixed，
+  // 完全脱离文档流，不会撑开 #app —— #app 高度恒为 0。按 #app 自身尺寸判断会
+  // 在「界面明明正常」时误报白屏，把错误卡片盖在可用界面上（已实测复现）。
+  // 因此改为逐个子节点量是否有可见面积。
+  function hasAppContent() {
+    var app = doc && doc.getElementById && doc.getElementById('app');
+    if (!app) return false;
+    if (doc.getElementById('boot-splash')) return false;
+    var kids = app.children;
+    if (!kids || kids.length === 0) {
+      // 某些极简环境没有 children 集合，退回 innerHTML 判断。
+      return typeof app.innerHTML === 'string' && app.innerHTML.length > 0;
+    }
+    for (var i = 0; i < kids.length; i += 1) {
+      var el = kids[i];
+      if (!el) continue;
+      if (!isFn(el.getBoundingClientRect)) return true;
+      var rect = el.getBoundingClientRect();
+      if (rect.width >= 24 && rect.height >= 24) return true;
+    }
+    // 兜底：子节点量不出尺寸但确实有文字内容，也算已渲染。
+    var text = String(app.textContent || '').replace(/\s+/g, '');
+    return text.length > 0;
+  }
+
+  // 清掉 Service Worker 与 Cache Storage 再重载：这一招同时解决
+  // 「旧 SW 拦截导航」「HTML 缓存指向已删除的旧 hash 资源」两类白屏。
+  function hardReload() {
+    var href = win.location.href.split('#')[0];
+    href += (href.indexOf('?') === -1 ? '?' : '&') + '_r=' + new Date().getTime();
+    var doReload = function () { win.location.replace(href); };
+    var pending = 0;
+    var done = function () {
+      pending -= 1;
+      if (pending <= 0) doReload();
+    };
+
+    try {
+      if (win.navigator && win.navigator.serviceWorker &&
+          isFn(win.navigator.serviceWorker.getRegistrations)) {
+        pending += 1;
+        win.navigator.serviceWorker.getRegistrations().then(function (list) {
+          for (var i = 0; i < list.length; i += 1) {
+            try { list[i].unregister(); } catch (e) {}
+          }
+          done();
+        })['catch'](done);
+      }
+      if (win.caches && isFn(win.caches.keys)) {
+        pending += 1;
+        win.caches.keys().then(function (keys) {
+          for (var i = 0; i < keys.length; i += 1) {
+            try { win.caches['delete'](keys[i]); } catch (e) {}
+          }
+          done();
+        })['catch'](done);
+      }
+    } catch (e) {}
+
+    if (pending <= 0) {
+      doReload();
+      return;
+    }
+    // 兜底：异步清理卡住时也要让用户能重载。
+    win.setTimeout(doReload, 1500);
+  }
+
+  function createActionButton(text, handler, primary) {
+    var button = doc.createElement('button');
+    button.type = 'button';
+    button.appendChild(doc.createTextNode(text));
+    button.style.cssText = [
+      'display:inline-block', 'padding:10px 20px', 'min-height:44px',
+      'margin:0 10px 10px 0', 'border:0', 'border-radius:10px',
+      primary ? 'background:#0f766e' : 'background:#e3e8ee',
+      primary ? 'color:#fff' : 'color:#1f2933',
+      'font-size:16px', 'cursor:pointer'
+    ].join(';');
+    button.onclick = handler;
+    return button;
+  }
+
+  function showBootNotice(title, detail, options) {
     if (noticeShown || !doc) return;
-    var app = doc.getElementById && doc.getElementById('app');
-    // 已经挂载成功就不要覆盖真实界面。
-    if (!app || (app.innerHTML && app.innerHTML.length > 0)) return;
+    var opts = options || {};
+    // 已经挂载成功就不要覆盖真实界面；除非调用方明确要求强制提示。
+    if (!opts.force && hasAppContent()) return;
     noticeShown = true;
 
     var box = doc.createElement('div');
@@ -339,19 +424,15 @@
     body.style.cssText = 'margin:0 0 18px;font-size:15px;color:#52606d;word-break:break-word';
     body.appendChild(doc.createTextNode(detail));
 
-    var button = doc.createElement('button');
-    button.type = 'button';
-    button.appendChild(doc.createTextNode('重新加载'));
-    button.style.cssText = [
-      'display:inline-block', 'padding:10px 20px', 'min-height:44px',
-      'border:0', 'border-radius:10px', 'background:#0f766e', 'color:#fff',
-      'font-size:16px', 'cursor:pointer'
-    ].join(';');
-    button.onclick = function () { win.location.reload(); };
+    var actions = doc.createElement('div');
+    actions.appendChild(createActionButton('清除缓存并重新加载', hardReload, true));
+    actions.appendChild(createActionButton('重新加载', function () {
+      win.location.reload();
+    }, false));
 
     card.appendChild(heading);
     card.appendChild(body);
-    card.appendChild(button);
+    card.appendChild(actions);
     box.appendChild(card);
     if (doc.body) doc.body.appendChild(box);
     else if (doc.documentElement) doc.documentElement.appendChild(box);
@@ -362,41 +443,88 @@
     if (event && event.message) message = String(event.message);
     else if (event && event.reason) message = String(event.reason && event.reason.message || event.reason);
     win.setTimeout(function () {
+      // 这里不加 force：已经成功挂载的界面不应该被一条迟到的错误盖住。
       showBootNotice(
         '页面加载遇到问题',
         (message ? '错误信息：' + message + '。' : '') +
-        '请检查网络后点击「重新加载」。若仍然无法打开，可尝试切换为系统浏览器或更新微信/浏览器版本。'
+        '请检查网络后点击「清除缓存并重新加载」。若仍然无法打开，可尝试切换为系统浏览器或更新微信/浏览器版本。'
       );
     }, 120);
   }
+
+  // 供 main.js 的 Vue errorHandler 调用：Vue 内部错误不会触发 window error 事件，
+  // 过去它们只会让界面静默变空。
+  function reportFatal(message, force) {
+    showBootNotice(
+      '界面渲染失败',
+      (message ? '错误信息：' + message + '。' : '') +
+      '可以点击「清除缓存并重新加载」修复；若反复出现，请把这条错误信息反馈给管理员。',
+      { force: force !== false }
+    );
+  }
+
+  // 暴露给业务代码复用（useChatViewport 会读取）。
+  define(win, 'EdgeChatCompat', {
+    syncViewportVars: syncViewportVars,
+    reportFatal: reportFatal,
+    hardReload: hardReload,
+    hasAppContent: hasAppContent,
+    hasMediaQueryListeners: !!(MQL && MQL.prototype && isFn(MQL.prototype.addEventListener))
+  });
 
   if (isFn(win.addEventListener)) {
     win.addEventListener('error', onBootError, false);
     win.addEventListener('unhandledrejection', onBootError, false);
   }
 
-  // 完全不支持 ES Module 的内核（Chrome < 61 / iOS < 11）不会执行任何打包脚本。
-  // 至少给出明确说明，而不是一片空白。
+  // 完全不支持 ES Module 的内核（Chrome < 61 / iOS < 11）过去只会执行到这一段。
+  // 若构建产物里带了 legacy（nomodule）备份包，它们仍能跑起来，因此这里不立刻
+  // 报错，而是交给下面的看门狗：确实什么都没渲染出来时再提示升级。
   var supportsModule = doc && doc.createElement
     ? 'noModule' in doc.createElement('script')
     : true;
-  if (!supportsModule) {
-    win.setTimeout(function () {
+
+  // 看门狗：脚本跑完但界面始终没出现（白屏）时给出可操作的出口。
+  // 6.5 秒足够覆盖弱网首屏；此时静态占位已被 Vue 替换却仍然没有内容，
+  // 说明渲染链路真的断了，而不是还在加载。
+  var watchdogShown = false;
+  function watchdogCheck() {
+    if (noticeShown || watchdogShown) return;
+    if (hasAppContent()) return;
+    // 静态占位还在，说明还在等资源/等路由，交给下面的「加载较慢」提示。
+    if (doc && doc.getElementById && doc.getElementById('boot-splash')) return;
+    watchdogShown = true;
+    if (!supportsModule) {
       showBootNotice(
         '浏览器版本过旧',
-        '当前浏览器内核不支持现代网页应用所需的模块脚本。请更新系统浏览器，或在微信中点击右上角「···」选择「在浏览器中打开」。'
+        '当前浏览器内核无法运行这个网页应用。请更新系统浏览器，' +
+        '或在微信中点击右上角「···」选择「在浏览器中打开」。',
+        { force: true }
       );
-    }, 0);
-  } else {
-    // 网络慢或 CDN 抖动时，8 秒后仍没挂载就给出提示（不会覆盖已挂载成功的界面）。
-    win.setTimeout(function () {
-      var app = doc && doc.getElementById && doc.getElementById('app');
-      if (app && (!app.innerHTML || app.innerHTML.length === 0)) {
-        showBootNotice(
-          '加载较慢',
-          '页面资源还没有加载完成。请检查网络后点击「重新加载」，或稍后再试。'
-        );
-      }
-    }, 8000);
+      return;
+    }
+    showBootNotice(
+      '界面没有显示出来',
+      '页面脚本已经执行，但界面未能渲染。常见原因是浏览器缓存了旧版本资源，' +
+      '或网络中断。请点击「清除缓存并重新加载」；若仍无效，' +
+      '请换用系统浏览器（微信中点击右上角「···」→「在浏览器中打开」）。',
+      { force: true }
+    );
   }
+
+  win.setTimeout(watchdogCheck, 6500);
+
+  // 12 秒仍在加载：区分「慢」与「内核算不动」。
+  win.setTimeout(function () {
+    if (noticeShown || hasAppContent()) return;
+    if (doc && doc.getElementById && doc.getElementById('boot-splash')) {
+      showBootNotice(
+        '加载较慢',
+        '页面资源还没有加载完成。请检查网络后点击「清除缓存并重新加载」，或稍后再试。',
+        { force: true }
+      );
+      return;
+    }
+    watchdogCheck();
+  }, 12000);
 })(typeof window !== 'undefined' ? window : this);
