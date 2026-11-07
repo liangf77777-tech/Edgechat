@@ -1,0 +1,35 @@
+# 部署后自动体检：确认 Worker 与自定义域仍可对外服务。
+# 站点开启隐身模式时，未登录请求也可能返回 401/403，均视为服务存活。
+name: Post Deploy Health Check
+on:
+  workflow_run:
+    workflows: ["00 Deploy Worker"]
+    types:
+      - completed
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  health-check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe deployed site
+        shell: bash
+        env:
+          SITE_URL: https://x.0123.you/login
+        run: |
+          healthy=0
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 20 "$SITE_URL" || echo 000)
+            echo "attempt ${attempt}: HTTP ${code}"
+            case "$code" in
+              200|401|403) healthy=1; break ;;
+            esac
+            sleep 15
+          done
+          if [ "$healthy" -ne 1 ]; then
+            echo "::error::Deployed site did not respond with a healthy status: ${SITE_URL}"
+            exit 1
+          fi
+          echo "Site is responding: ${SITE_URL}"
