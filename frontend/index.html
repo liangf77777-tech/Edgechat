@@ -2,10 +2,14 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Edgechat</title>
     <meta name="description" content="Edgechat 团队沟通与协作空间" />
     <meta name="theme-color" content="#fefdf8" />
+    <meta name="format-detection" content="telephone=no,date=no,address=no,email=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
@@ -31,6 +35,14 @@
       </defs>
     </svg>
     <div id="app"></div>
+    <noscript>
+      <div style="padding:24px;font:16px/1.6 sans-serif;color:#1f2933">
+        需要启用 JavaScript 才能使用 Edgechat。请在浏览器设置中开启后重新加载。
+      </div>
+    </noscript>
+    <!-- 纯 ES5 经典脚本：必须保持在 module 之前且不加 defer/async。
+         老内核缺失的内置 API、视口变量与启动兜底都在这里完成。 -->
+    <script src="/compat.js"></script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

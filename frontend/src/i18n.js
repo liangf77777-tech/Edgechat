@@ -13,6 +13,27 @@ export const LOCALE_OPTIONS = Object.freeze([
 
 const STORAGE_KEY = 'edgechat.locale';
 const TRADITIONAL_CHINESE_REGIONS = new Set(['tw', 'hk', 'mo']);
+
+// 不用 Object.hasOwn / String.prototype.replaceAll：这些是 ES2021/2022 才有的
+// 运行时 API，模块顶层一旦调用就会让老手机内核整体加载失败（白屏）。
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(Object(object), key);
+
+function readStoredLocale() {
+  try {
+    return typeof localStorage === 'undefined' ? '' : localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    // 无痕模式 / 禁用 DOM storage 的浏览器。
+    return '';
+  }
+}
+
+function writeStoredLocale(value) {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, value);
+  } catch (error) {
+    // 偏好存不下不影响本次会话的语言切换。
+  }
+}
 const localeLoaders = {
   [SIMPLIFIED_CHINESE_LOCALE]: () => import('./locales/zh-CN.js'),
   [TRADITIONAL_CHINESE_LOCALE]: () => import('./locales/zh-TW.js'),
@@ -20,11 +41,11 @@ const localeLoaders = {
 };
 
 function normalizeLocale(value) {
-  return Object.hasOwn(localeLoaders, value) ? value : ENGLISH_LOCALE;
+  return hasOwn(localeLoaders, value) ? value : ENGLISH_LOCALE;
 }
 
 export function detectBrowserLocale(value) {
-  const language = String(value || '').replaceAll('_', '-');
+  const language = String(value || '').split('_').join('-');
   if (!/^zh(?:-|$)/i.test(language)) return ENGLISH_LOCALE;
   const subtags = language.toLowerCase().split('-').slice(1);
 
@@ -39,9 +60,10 @@ export function detectBrowserLocale(value) {
 }
 
 function initialLocale() {
-  const storedLocale = typeof localStorage === 'undefined' ? '' : localStorage.getItem(STORAGE_KEY);
-  if (Object.hasOwn(localeLoaders, storedLocale)) return storedLocale;
-  const browserLanguage = globalThis.navigator?.languages?.[0] || globalThis.navigator?.language;
+  const storedLocale = readStoredLocale();
+  if (hasOwn(localeLoaders, storedLocale)) return storedLocale;
+  const nav = typeof navigator === 'undefined' ? null : navigator;
+  const browserLanguage = (nav && nav.languages && nav.languages[0]) || (nav && nav.language);
   return detectBrowserLocale(browserLanguage);
 }
 
@@ -52,7 +74,7 @@ let translateServerError = (message) => message;
 
 function interpolate(template, params) {
   return template.replace(/\{([a-zA-Z][\w]*)\}/g, (match, key) =>
-    Object.hasOwn(params, key) ? String(params[key]) : match
+    hasOwn(params, key) ? String(params[key]) : match
   );
 }
 
@@ -81,7 +103,7 @@ export async function setLocale(value, { persist = true } = {}) {
     activeMessages.value = localeModule.default;
     translateServerError = localeModule.localizeServerError || ((message) => message);
     locale.value = nextLocale;
-    if (persist && typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, nextLocale);
+    if (persist) writeStoredLocale(nextLocale);
     applyDocumentLocale();
   } finally {
     localeLoading.value = false;
@@ -104,14 +126,35 @@ export function parseDateValue(value) {
   return new Date(normalizedValue);
 }
 
+// dateStyle / timeStyle 是 ES2021，iOS 13 / Chrome 76 以下会抛 RangeError。
+// 构造失败时退回显式字段，保证消息时间戳在老手机上依然是普通文本。
+function createFormatter(options, fallback) {
+  try {
+    return new Intl.DateTimeFormat(locale.value, options);
+  } catch (error) {
+    return new Intl.DateTimeFormat(locale.value, fallback);
+  }
+}
+
+const DATETIME_FALLBACK = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+const DATE_FALLBACK = { year: 'numeric', month: 'short', day: 'numeric' };
+
 // 只缓存三个固定展示格式；自定义 options 保持原语义，不引入无限增长的全局缓存。
-const dateTimeFormatter = computed(() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }));
-const dateFormatter = computed(() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium' }));
-const timeFormatter = computed(() => new Intl.DateTimeFormat(locale.value, { hour: '2-digit', minute: '2-digit' }));
+const dateTimeFormatter = computed(() => createFormatter({ dateStyle: 'medium', timeStyle: 'short' }, DATETIME_FALLBACK));
+const dateFormatter = computed(() => createFormatter({ dateStyle: 'medium' }, DATE_FALLBACK));
+const timeFormatter = computed(() => createFormatter({ hour: '2-digit', minute: '2-digit' }, { hour: '2-digit', minute: '2-digit' }));
 
 function formatWith(value, options, formatter) {
   const date = parseDateValue(value);
-  return Number.isNaN(date.getTime()) ? '' : (options === undefined ? formatter.value : new Intl.DateTimeFormat(locale.value, options)).format(date);
+  if (Number.isNaN(date.getTime())) return '';
+  if (options !== undefined) {
+    try {
+      return createFormatter(options, DATETIME_FALLBACK).format(date);
+    } catch (error) {
+      return '';
+    }
+  }
+  return formatter.value.format(date);
 }
 
 export function formatDateTime(value, options) {

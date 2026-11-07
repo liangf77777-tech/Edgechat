@@ -30,6 +30,13 @@ export default defineConfig({
   build: {
     outDir: resolve(dirname, 'dist'),
     emptyOutDir: true,
+    // Vite 8 默认 target 是 baseline-widely-available（Chrome 107 / Safari 16），
+    // 产物会保留可选链、空值合并、类字段等语法。微信 X5 老内核、UC、QQ 浏览器、
+    // iOS 13/14 自带 Safari 解析到这些语法会直接整体失败 —— 表现就是手机端白屏。
+    // 降至 es2015（Vue 3 的运行底线），配合 public/compat.js 补齐运行时 API。
+    target: 'es2015',
+    // CSS 侧同理：older WebKit 需要前缀，且不能输出 :is()/:where() 等新选择器。
+    cssTarget: ['chrome61', 'safari11'],
     rolldownOptions: {
       output: {
         codeSplitting: {

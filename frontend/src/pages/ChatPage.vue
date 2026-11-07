@@ -990,8 +990,11 @@ watch(
   left: 0;
   display: flex;
   width: 100%;
-  height: var(--chat-viewport-height, 100dvh);
-  min-height: 100dvh;
+  /* 兼容层会在挂载前写入 --chat-viewport-height（跟随软键盘）；
+     100dvh 在 iOS 15.4 以下 / Chrome 108 以下不认识，整条声明会被丢弃导致
+     容器高度塌陷、手机端整页空白，因此回退值统一用老内核认识的 100vh。 */
+  height: var(--chat-viewport-height, 100vh);
+  min-height: 100vh;
   overflow: hidden;
   background: var(--site-background, var(--chat-canvas));
   color: var(--chat-ink);
@@ -1001,7 +1004,7 @@ watch(
 
 .chat-layout--calling {
   top: calc(var(--chat-viewport-offset-top, 0px) + 64px);
-  height: calc(var(--chat-viewport-height, 100dvh) - 64px);
+  height: calc(var(--chat-viewport-height, 100vh) - 64px);
   min-height: 0;
 }
 

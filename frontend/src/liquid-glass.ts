@@ -1,5 +1,6 @@
 import { watch } from 'vue';
 import { lowEffects } from './visual-effects.ts';
+import { onMediaQueryChange, safeMatchMedia } from './media-query.js';
 
 const selector = '.ui-surface, .chat-bubble, .liquid-glass-panel';
 let dispose: (() => void) | undefined;
@@ -7,7 +8,10 @@ let dispose: (() => void) | undefined;
 export function initLiquidGlass() {
   if (dispose) return dispose;
 
-  const hover = window.matchMedia('(hover: hover) and (pointer: fine)');
+  const hover = safeMatchMedia(
+    '(hover: hover) and (pointer: fine)',
+    typeof window !== 'undefined' ? window : undefined
+  );
   let frame: number | null = null;
   let pending: PointerEvent | null = null;
   let active: HTMLElement[] = [];
@@ -99,14 +103,14 @@ export function initLiquidGlass() {
   }
 
   const stopWatch = watch(lowEffects, syncTracking, { flush: 'sync' });
-  hover.addEventListener('change', syncTracking);
+  const offHover = onMediaQueryChange(hover, syncTracking);
   document.addEventListener('visibilitychange', syncTracking);
   window.addEventListener('blur', clear);
   syncTracking();
 
   dispose = () => {
     stopWatch();
-    hover.removeEventListener('change', syncTracking);
+    offHover();
     document.removeEventListener('visibilitychange', syncTracking);
     window.removeEventListener('blur', clear);
     document.removeEventListener('pointermove', onMove, true);

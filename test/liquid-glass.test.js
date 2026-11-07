@@ -4,12 +4,15 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { computed, ref, watch } from 'vue';
+import { onMediaQueryChange, safeMatchMedia } from '../frontend/src/media-query.js';
 
 function load(name, context, exports) {
   const source = readFileSync(new URL(`../frontend/src/${name}.ts`, import.meta.url), 'utf8');
+  // load() 会剥掉源码里的 import 行，因此这里显式注入兼容封装。
   return runInNewContext(`${stripTypeScriptTypes(source)
     .replace(/^import .+;\r?\n/gm, '')
-    .replace(/^export /gm, '')}\n({${exports}})`, { computed, ref, watch, ...context });
+    .replace(/^export /gm, '')}\n({${exports}})`,
+    { computed, ref, watch, onMediaQueryChange, safeMatchMedia, ...context });
 }
 
 function eventTarget() {

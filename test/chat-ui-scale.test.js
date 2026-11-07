@@ -40,7 +40,8 @@ function getStyleRule(source, selector) {
 test("聊天界面使用原始控件尺寸铺满整个视口", () => {
 	const layout = getStyleRule(chatPage, ".chat-layout");
 	assert.match(layout, /width:\s*100%;/);
-	assert.match(layout, /height:\s*var\(--chat-viewport-height,\s*100dvh\);/);
+	// 回退值必须用老手机内核认识的 100vh；100dvh 在 iOS 15.4 以下会整条声明失效。
+	assert.match(layout, /height:\s*var\(--chat-viewport-height,\s*100vh\);/);
 	assert.match(layout, /position:\s*fixed;/);
 	assert.match(layout, /top:\s*var\(--chat-viewport-offset-top,\s*0px\);/);
 	assert.match(layout, /overflow:\s*hidden;/);

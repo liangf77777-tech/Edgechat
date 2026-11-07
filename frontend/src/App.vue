@@ -28,6 +28,7 @@ const DemoNavigator = globalThis.__EDGECHAT_DEMO__
 .app-loading {
   position: relative;
   display: grid;
+  min-height: 100vh;
   min-height: 100dvh;
   place-items: center;
   color: var(--text);

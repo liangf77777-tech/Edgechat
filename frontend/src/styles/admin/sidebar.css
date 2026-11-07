@@ -1,6 +1,7 @@
 .admin-sidebar {
   width: var(--admin-sidebar-width);
   min-width: var(--admin-sidebar-width);
+  height: 100vh;
   height: 100dvh;
   min-height: 0;
   flex-shrink: 0;

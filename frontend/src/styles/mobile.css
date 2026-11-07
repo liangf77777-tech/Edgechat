@@ -1,0 +1,141 @@
+/* mobile.css — 手机网页端适配与老旧内核兜底。
+ * 由 main.js 在其它样式表之后引入，保证覆盖顺序。
+ * 设计原则：老浏览器不认识的新特性一律提供旧写法作为前置回退；
+ * 移动端优先保证「内容一定可见、可点、可滚」，视觉特效可以降级。 */
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -ms-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* base.css 用的是 overflow-x: clip；旧内核不认识 clip，整条声明会被丢弃，
+     横向溢出会把整页推走。这里补一个老写法。 */
+  overflow-x: hidden;
+}
+
+body {
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: contain;
+}
+
+/* 触摸目标与惯性滚动，兼容所有手机内核。 */
+button,
+a,
+[role='button'],
+input,
+textarea,
+select {
+  touch-action: manipulation;
+}
+
+.chat-messages,
+.conversation-list,
+[class*='scroll'],
+[style*='overflow'] {
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 960px) {
+  /* 1. 关掉桌面装饰：65vw 的 blur(80px) 光团 + 无限动画，在低端手机 GPU 上
+        会造成持续重绘，极端情况下整页渲染不出来。 */
+  body::before,
+  body::after {
+    display: none !important;
+    animation: none !important;
+    filter: none !important;
+  }
+
+  /* 2. 关掉 SVG feTurbulence + feDisplacementMap 折射滤镜。
+        backdrop-filter 里引用 SVG 滤镜在移动 Safari / 微信 WKWebView 上有
+        「整块元素变空白」的已知问题，且非常耗电。保留普通半透明底色即可。 */
+  .app-window::before,
+  .liquid-glass-panel::before {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
+
+  .app-window,
+  .liquid-glass-panel,
+  .ui-surface,
+  .chat-bubble,
+  .page-card {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* 3. iOS 聚焦输入框时若字号 <16px 会自动放大整页且不会缩回。 */
+  input,
+  textarea,
+  select,
+  [contenteditable='true'] {
+    font-size: 16px !important;
+  }
+
+  /* 4. 触摸目标不小于 44px，避免按钮点不中。 */
+  button,
+  [role='button'],
+  a {
+    min-height: 40px;
+  }
+
+  /* 5. 页面容器留出安全区，刘海屏/底部手势条不遮挡内容。 */
+  .page-shell {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 24px 18px;
+  }
+
+  /* 6. 弹窗不要顶到屏幕边缘，键盘弹出时仍能看到标题与关闭按钮。 */
+  .room-dialog,
+  .user-profile-dialog,
+  .user-details {
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+}
+
+/* 小屏与横屏进一步压缩纵向占用。 */
+@media (max-width: 380px) {
+  .page-shell {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .sidebar-header,
+  .chat-header {
+    min-height: 48px !important;
+  }
+}
+
+/* 老内核没有 dvh / env() 时的兜底：@supports 在 Chrome 28+ / iOS 9+ 可用，
+   更老的浏览器会忽略整块，但上面的 100vh 前置声明仍然生效。 */
+@supports not (height: 100dvh) {
+  .app-loading,
+  .chat-layout {
+    min-height: 100vh !important;
+  }
+  .chat-layout {
+    height: var(--chat-viewport-height, 100vh) !important;
+  }
+}
+
+/* 尊重系统「减少动态效果」，同时避免低端设备持续动画卡顿。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
