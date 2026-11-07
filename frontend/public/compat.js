@@ -143,9 +143,23 @@
       var vendorMatches = ElementCtor.prototype.msMatchesSelector ||
         ElementCtor.prototype.webkitMatchesSelector ||
         ElementCtor.prototype.mozMatchesSelector;
-      if (vendorMatches) define(ElementCtor.prototype, 'matches', vendorMatches);
+      // 极老 WebKit 连带前缀的 matchesSelector 都没有；退化成 querySelectorAll
+      // 比对，保证 matches 一定存在，后面的 closest 才有实现基础。
+      if (!vendorMatches) {
+        vendorMatches = function (selector) {
+          try {
+            var owner = this.ownerDocument || doc;
+            var nodes = owner.querySelectorAll(selector);
+            for (var i = 0; i < nodes.length; i += 1) {
+              if (nodes[i] === this) return true;
+            }
+          } catch (e) {}
+          return false;
+        };
+      }
+      define(ElementCtor.prototype, 'matches', vendorMatches);
     }
-    if (!ElementCtor.prototype.closest && ElementCtor.prototype.matches) {
+    if (!ElementCtor.prototype.closest) {
       define(ElementCtor.prototype, 'closest', function (selector) {
         var node = this;
         while (node && node.nodeType === 1) {

@@ -107,10 +107,14 @@ function createLegacySandbox({ supportsModule = true, brokenStorage = true } = {
     styleProps,
     listeners,
     timers,
-    flushTimers() {
+    flushTimers(maxDelay) {
+      const limit = maxDelay === undefined ? Infinity : maxDelay;
       const pending = timers.splice(0, timers.length);
-      for (const item of pending) item.fn();
-      return pending.length;
+      const due = pending.filter((item) => item.delay <= limit);
+      const rest = pending.filter((item) => item.delay > limit);
+      for (const item of rest) timers.push(item);
+      for (const item of due) item.fn();
+      return due.length;
     }
   };
 }
@@ -188,7 +192,8 @@ test('启动期异常会渲染可见错误卡片，而不是留下白屏', () =>
   for (const fn of env.listeners.error || []) {
     fn({ message: 'Object.hasOwn is not a function' });
   }
-  env.flushTimers();
+  // 只执行错误提示的短定时器；8 秒的「加载较慢」兜底先执行会抢先占位。
+  env.flushTimers(1000);
 
   assert.equal(env.bodyEl.children.length, 1, '应插入兜底提示节点');
   const notice = env.bodyEl.children[0];
