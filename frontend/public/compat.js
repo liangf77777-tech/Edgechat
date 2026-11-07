@@ -307,33 +307,117 @@
    * ------------------------------------------------------------------ */
   var noticeShown = false;
 
-  // 界面是否真的画出来了。#boot-splash 是 index.html 里的静态占位，
-  // Vue 挂载时会被整体替换掉，所以「还看得到它」等于「Vue 尚未接管」。
+  win.__edgechatBoot = {
+    at: new Date().getTime(),
+    compat: '2026-11-07b',
+    mounted: false,
+    painted: false,
+    note: 'boot-trace'
+  };
+
+  // 界面是否真的画出来了。
   //
-  // 关键：不能量 #app 自己的盒子。聊天页根节点 .chat-layout 是 position:fixed，
-  // 完全脱离文档流，不会撑开 #app —— #app 高度恒为 0。按 #app 自身尺寸判断会
-  // 在「界面明明正常」时误报白屏，把错误卡片盖在可用界面上（已实测复现）。
-  // 因此改为逐个子节点量是否有可见面积。
+  // 两条判据都不能用错，历史上各踩过一次：
+  //   1. 不能量 #app 自身的盒子。聊天页根节点 .chat-layout 是 position:fixed，
+  //      完全脱离文档流，不会撑开 #app —— #app 高度恒为 0。按 #app 自身尺寸
+  //      判断会在「界面明明正常」时误报白屏（已实测复现）。
+  //   2. 不能用 innerHTML 是否为空判断。路由还没解析出来时 <router-view> 只渲染
+  //      一个注释占位（<!---->），innerHTML 非空而屏幕上什么都没有；过去的兜底
+  //      分支正是踩了这个坑，把白屏判成「已渲染」，看门狗全程沉默 —— 用户看到
+  //      的就是「加载中闪一下，然后永久白屏且没有任何提示」。
+  // 所以只认两样东西：有可见面积的元素子节点，或真实文字（textContent 不含注释）。
   function hasAppContent() {
     var app = doc && doc.getElementById && doc.getElementById('app');
     if (!app) return false;
-    if (doc.getElementById('boot-splash')) return false;
     var kids = app.children;
-    if (!kids || kids.length === 0) {
-      // 某些极简环境没有 children 集合，退回 innerHTML 判断。
-      return typeof app.innerHTML === 'string' && app.innerHTML.length > 0;
+    var i;
+    var realChildren = 0;
+    if (kids && kids.length) {
+      for (i = 0; i < kids.length; i += 1) {
+        var el = kids[i];
+        if (!el) continue;
+        // 「读取中」是 App.vue 自己的加载态，不是真实界面：它出现说明会话还没
+        // 恢复完，此时撤掉首屏占位只会「闪一下再白屏」，所以不计入内容。
+        if ((' ' + String(el.className || '') + ' ').indexOf(' app-loading ') > -1) continue;
+        realChildren += 1;
+        if (!isFn(el.getBoundingClientRect)) return true;
+        var rect = el.getBoundingClientRect();
+        if (rect && rect.width >= 24 && rect.height >= 24) return true;
+        if (String(el.textContent || '').replace(/\s+/g, '').length > 0) return true;
+      }
+      // 有元素子节点但全都是加载态 → 还没画出真界面。
+      if (realChildren === 0) return false;
     }
-    for (var i = 0; i < kids.length; i += 1) {
-      var el = kids[i];
-      if (!el) continue;
-      if (!isFn(el.getBoundingClientRect)) return true;
-      var rect = el.getBoundingClientRect();
-      if (rect.width >= 24 && rect.height >= 24) return true;
-    }
-    // 兜底：子节点量不出尺寸但确实有文字内容，也算已渲染。
     var text = String(app.textContent || '').replace(/\s+/g, '');
     return text.length > 0;
   }
+
+  /* ------------------------------------------------------------------ *
+   * 8. 首屏占位控制
+   *    #boot-splash 位于 #app 之外，Vue 挂载不会带走它；只有确认界面真的
+   *    画出内容后才移除。这样即使路由永远解析不出来，用户看到的也是
+   *    「加载中…」+ 可操作提示，而不是纯白。
+   * ------------------------------------------------------------------ */
+  var splashRemoved = false;
+  var splashNode = null;
+
+  function getSplash() {
+    if (splashNode && splashNode.parentNode) return splashNode;
+    splashNode = doc && doc.getElementById ? doc.getElementById('boot-splash') : null;
+    return splashNode;
+  }
+
+  function removeSplash() {
+    if (splashRemoved) return;
+    splashRemoved = true;
+    var node = getSplash();
+    if (!node) return;
+    try {
+      if (node.style) {
+        node.style.transition = 'opacity 140ms linear';
+        node.style.opacity = '0';
+      }
+    } catch (e) {}
+    var drop = function () {
+      try {
+        if (node.parentNode) node.parentNode.removeChild(node);
+      } catch (e) {}
+    };
+    try { win.setTimeout(drop, 160); } catch (e) { drop(); }
+  }
+
+  function paintConfirmed() {
+    if (!hasAppContent()) return false;
+    win.__edgechatBoot.painted = true;
+    removeSplash();
+    return true;
+  }
+
+  // 挂载后内容出现的那一刻就撤掉占位：MutationObserver 立即响应，
+  // 再加一路 250ms 轮询兜底（极老内核 / 无 MutationObserver 的 WebView）。
+  (function watchPaint() {
+    if (splashRemoved) return;
+    if (paintConfirmed()) return;
+    var appNode = doc && doc.getElementById ? doc.getElementById('app') : null;
+    if (appNode && isFn(win.MutationObserver)) {
+      try {
+        var observer = new win.MutationObserver(function () {
+          if (paintConfirmed()) observer.disconnect();
+        });
+        observer.observe(appNode, { childList: true, subtree: true, characterData: true });
+      } catch (e) {}
+    }
+    var ticks = 0;
+    var poll = function () {
+      if (splashRemoved) return;
+      ticks += 1;
+      if (paintConfirmed()) return;
+      // 最长盯 40 秒，之后完全交给下面的看门狗，避免无谓的定时器。
+      if (ticks > 160) return;
+      win.setTimeout(poll, 250);
+    };
+    win.setTimeout(poll, 250);
+  })();
 
   // 清掉 Service Worker 与 Cache Storage 再重载：这一招同时解决
   // 「旧 SW 拦截导航」「HTML 缓存指向已删除的旧 hash 资源」两类白屏。
@@ -377,6 +461,41 @@
     win.setTimeout(doReload, 1500);
   }
 
+  function buildDiagnostics() {
+    var nav = win.navigator || {};
+    var boot = win.__edgechatBoot || {};
+    var appNode = doc && doc.getElementById ? doc.getElementById('app') : null;
+    var kids = appNode && appNode.children ? appNode.children.length : -1;
+    return [
+      'href=' + (win.location && win.location.href ? win.location.href : ''),
+      'ua=' + (nav.userAgent || ''),
+      'compat=' + (boot.compat || '') + ' mounted=' + boot.mounted + ' painted=' + boot.painted,
+      'route=' + (boot.route || '') + ' kids=' + kids,
+      'errors=' + ((boot.errors && boot.errors.length ? boot.errors.join(' || ') : 'none'))
+    ].join('\n');
+  }
+
+  // 手机端排查只能靠用户把现场带回来：一键复制设备与启动轨迹。
+  function copyDiagnostics() {
+    var text = buildDiagnostics();
+    var nav = win.navigator || {};
+    try {
+      if (nav.clipboard && isFn(nav.clipboard.writeText)) {
+        nav.clipboard.writeText(text);
+        return;
+      }
+    } catch (e) {}
+    try {
+      var area = doc.createElement('textarea');
+      area.value = text;
+      area.style.cssText = 'position:fixed;left:-9999px;top:0';
+      doc.body.appendChild(area);
+      if (isFn(area.select)) area.select();
+      if (isFn(doc.execCommand)) doc.execCommand('copy');
+      doc.body.removeChild(area);
+    } catch (e) {}
+  }
+
   function createActionButton(text, handler, primary) {
     var button = doc.createElement('button');
     button.type = 'button';
@@ -398,6 +517,8 @@
     // 已经挂载成功就不要覆盖真实界面；除非调用方明确要求强制提示。
     if (!opts.force && hasAppContent()) return;
     noticeShown = true;
+    // 提示卡片自己要占据首屏，占位留着会互相遮挡。
+    removeSplash();
 
     var box = doc.createElement('div');
     box.setAttribute('role', 'alert');
@@ -429,10 +550,16 @@
     actions.appendChild(createActionButton('重新加载', function () {
       win.location.reload();
     }, false));
+    actions.appendChild(createActionButton('复制诊断信息', copyDiagnostics, false));
+
+    var hint = doc.createElement('p');
+    hint.style.cssText = 'margin:14px 0 0;font-size:12px;line-height:1.6;color:#7b8794;word-break:break-all';
+    hint.appendChild(doc.createTextNode(buildDiagnostics()));
 
     card.appendChild(heading);
     card.appendChild(body);
     card.appendChild(actions);
+    card.appendChild(hint);
     box.appendChild(card);
     if (doc.body) doc.body.appendChild(box);
     else if (doc.documentElement) doc.documentElement.appendChild(box);
@@ -442,6 +569,10 @@
     var message = '';
     if (event && event.message) message = String(event.message);
     else if (event && event.reason) message = String(event.reason && event.reason.message || event.reason);
+    try {
+      win.__edgechatBoot.errors = win.__edgechatBoot.errors || [];
+      if (message && win.__edgechatBoot.errors.length < 6) win.__edgechatBoot.errors.push(message);
+    } catch (e) {}
     win.setTimeout(function () {
       // 这里不加 force：已经成功挂载的界面不应该被一条迟到的错误盖住。
       showBootNotice(
@@ -455,10 +586,16 @@
   // 供 main.js 的 Vue errorHandler 调用：Vue 内部错误不会触发 window error 事件，
   // 过去它们只会让界面静默变空。
   function reportFatal(message, force) {
+    if (win.__edgechatBoot) {
+      try {
+        win.__edgechatBoot.errors = win.__edgechatBoot.errors || [];
+        if (message) win.__edgechatBoot.errors.push(String(message));
+      } catch (e) {}
+    }
     showBootNotice(
       '界面渲染失败',
       (message ? '错误信息：' + message + '。' : '') +
-      '可以点击「清除缓存并重新加载」修复；若反复出现，请把这条错误信息反馈给管理员。',
+      '可以点击「清除缓存并重新加载」修复；若反复出现，请按「复制诊断信息」把下面这段反馈给管理员。',
       { force: force !== false }
     );
   }

@@ -79,6 +79,75 @@ safeRun('custom-background', () => {
   if (customBg) document.body.style.background = customBg;
 });
 
+function currentPath() {
+  const route = router && router.currentRoute ? router.currentRoute.value : null;
+  return route && route.fullPath ? route.fullPath : '';
+}
+
+// 路由是否真的匹配到了组件。拿不到路由对象时返回 true —— 宁可少判断一次，
+// 也不要在桩环境里把正常启动误报成故障。
+function routeUnmatched() {
+  const route = router && router.currentRoute ? router.currentRoute.value : null;
+  if (!route) return false;
+  return !route.matched || route.matched.length === 0;
+}
+
+// 界面是否真的画出来了。判定逻辑放在 compat.js 里：它要处理聊天页那种
+// 「子节点 fixed、#app 高度为 0」的正常结构，本地再实现一份没有意义。
+function appPainted() {
+  const compat = window.EdgeChatCompat;
+  if (!compat || typeof compat.hasAppContent !== 'function') return true;
+  return compat.hasAppContent();
+}
+
+function bootReport(message) {
+  safeRun('boot-report', () => {
+    const compat = window.EdgeChatCompat;
+    if (compat && typeof compat.reportFatal === 'function') compat.reportFatal(message, true);
+  });
+  if (typeof console !== 'undefined' && typeof console.error === 'function') {
+    console.error('[edgechat] 启动失败：', message);
+  }
+}
+
+// 首屏自愈：手机端出现过「加载中闪一下然后永久白屏」——
+// 路由没解析出来时 RouterView 只渲染注释，屏幕上什么都没有，而旧版兜底又把
+// 注释当成「已渲染」，于是既空白又不提示。现在：
+//   1. 占位由 compat.js 托管，确认真的画出内容才撤掉，中途不会留白；
+//   2. 路由为空就退回登录页重试一次；
+//   3. 仍然为空则给出可见、可复制的错误卡片。
+function ensurePainted() {
+  let retried = false;
+  const timers = [];
+  const stop = () => {
+    while (timers.length) clearTimeout(timers.pop());
+  };
+  const check = (stage) => {
+    if (appPainted()) {
+      stop();
+      return;
+    }
+    safeRun('boot-trace', () => {
+      if (window.__edgechatBoot) window.__edgechatBoot.route = currentPath();
+    });
+    // 路由已经匹配，只是在等资源下载：属于正常加载，占位还盖着，不要打断。
+    if (!routeUnmatched()) return;
+    if (stage === 1 && !retried && currentPath() !== '/login') {
+      retried = true;
+      safeRun('route-fallback', () => {
+        Promise.resolve(router.replace('/login')).catch(noop);
+      });
+      return;
+    }
+    if (stage >= 2) {
+      stop();
+      bootReport('路由未匹配，首屏 5 秒内没有可渲染内容（path=' + (currentPath() || '未知') + '）');
+    }
+  };
+  timers.push(setTimeout(() => check(1), 2200));
+  timers.push(setTimeout(() => check(2), 5200));
+}
+
 function reportRenderError(error, info) {
   const message = error && error.message ? error.message : String(error);
   safeRun('report-render-error', () => {
@@ -105,10 +174,17 @@ function mountApp() {
   // 关键：等路由解析完成再挂载。
   // app.use(router) 后初始导航是异步的，RouterView 在路由未解析前渲染空树；
   // 弱网手机上这段窗口能有数秒，用户看到的就是「加载中闪一下，然后白屏」。
-  // 最多等 6 秒就照常挂载，避免守卫卡在慢请求上导致永久停在加载页。
+  // 最多等 6 秒就照常挂载，避免守卫卡在慢请求上导致永久停在加载页；
+  // 但挂载后必须继续自愈（ensurePainted），因为超时挂载时路由可能仍是空的。
   const routeReady = Promise.resolve()
     .then(() => router.isReady())
-    .catch(() => undefined);
+    .catch((error) => {
+      // 守卫抛错或首个分包加载失败时，导航会被中止，首屏永远没有内容。
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[edgechat] 路由初始化失败：', error);
+      }
+      return Promise.resolve(router.replace('/login')).catch(noop);
+    });
   const readyTimeout = new Promise((resolve) => {
     setTimeout(resolve, 6000);
   });
@@ -117,7 +193,11 @@ function mountApp() {
     .catch(() => undefined)
     .then(() => {
       safeRun('mount', () => app.mount('#app'));
+      safeRun('boot-trace', () => {
+        if (window.__edgechatBoot) window.__edgechatBoot.mounted = true;
+      });
       afterMount(app);
+      safeRun('ensure-painted', ensurePainted);
     });
 }
 

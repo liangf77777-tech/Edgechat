@@ -13,20 +13,24 @@ const compatPath = fileURLToPath(new URL('../frontend/public/compat.js', import.
 
 /**
  * 这一组测试锁定「加载中闪一下然后白屏」的回归：
- *   1. #app 里必须有首字节就能渲染的静态占位；
+ *   1. 首屏必须有首字节就能渲染的静态占位，且它不能放在 #app 里 ——
+ *      放在里面会被 Vue 挂载时一并清掉，路由没解析出来时页面就纯白；
  *   2. 挂载必须等路由解析完成（否则 RouterView 会渲染空树）；
- *   3. 界面最终没画出来时必须自动给出可操作的提示，而不是纯白。
+ *   3. 「有没有内容」的判据不能把注释节点当成内容：RouterView 未解析时
+ *      只渲染 <!---->，旧判据据此认为界面正常，于是白屏且没有任何提示；
+ *   4. 界面最终没画出来时必须自动给出可操作、可复制的提示。
  */
-test('index.html 在 #app 内提供不依赖 JS/CSS 的静态首屏占位', async () => {
+test('静态首屏占位在 #app 之外，不会被 Vue 挂载一并清掉', async () => {
   const html = await read('../frontend/index.html');
 
-  const appStart = html.indexOf('<div id="app">');
+  const appIndex = html.indexOf('<div id="app">');
   const splashIndex = html.indexOf('id="boot-splash"');
-  const appEnd = html.indexOf('</div>', splashIndex);
+  assert.ok(appIndex > -1, '必须保留 #app 挂载点');
+  assert.ok(splashIndex > -1, '必须保留静态首屏占位');
 
-  assert.ok(appStart > -1, '必须保留 #app 挂载点');
-  assert.ok(splashIndex > appStart, '静态占位必须在 #app 内部，Vue 挂载时才会被整体替换');
-  assert.ok(appEnd > splashIndex, '静态占位必须有闭合标签');
+  // #app 必须是空容器：占位一旦落在里面，mount() 会把它连内容一起替换掉。
+  assert.match(html, /<div id="app"><\/div>/, '#app 必须是空容器，占位不能放在里面');
+  assert.ok(splashIndex > appIndex, '占位必须在 #app 之后作为独立节点存在');
 
   // 占位必须是内联样式：外链 CSS 还没下载完时也要能画出来。
   assert.match(html, /id="boot-splash"[\s\S]{0,600}?position:fixed/);
@@ -34,7 +38,15 @@ test('index.html 在 #app 内提供不依赖 JS/CSS 的静态首屏占位', asyn
   assert.doesNotMatch(html, /<link[^>]+boot-splash/, '占位不能依赖外链样式');
 });
 
-test('入口先等路由解析再挂载，避免 RouterView 在路由未就绪时渲染空树', async () => {
+test('占位由兼容层托管：确认画出内容才移除', async () => {
+  const source = await readCompat();
+  assert.match(source, /function removeSplash\(/, '必须有显式的占位移除逻辑');
+  assert.match(source, /function paintConfirmed\(/, '移除占位前必须确认界面已绘制');
+  assert.match(source, /MutationObserver/, '内容出现时应立即撤掉占位');
+  assert.match(source, /function paintConfirmed\(\)[\s\S]{0,240}?removeSplash\(\)/, '判定与移除必须成对出现');
+});
+
+test('入口先等路由解析再挂载，并在挂载后继续自愈', async () => {
   const main = await read('../frontend/src/main.js');
 
   assert.match(main, /router\.isReady\(\)/, '挂载前必须等待路由就绪');
@@ -45,6 +57,12 @@ test('入口先等路由解析再挂载，避免 RouterView 在路由未就绪�
   const raceIndex = main.indexOf('Promise.race([routeReady, readyTimeout])');
   assert.ok(mountIndex > -1 && raceIndex > -1);
   assert.ok(mountIndex > raceIndex, '挂载必须发生在路由就绪之后');
+
+  // 超时挂载时路由可能仍然是空的，必须有挂载后的自愈与上报。
+  assert.match(main, /function ensurePainted\(/, '必须有挂载后的首屏自愈');
+  assert.match(main, /ensure-painted/, '自愈必须在挂载后被调用');
+  assert.match(main, /replace\('\/login'\)/, '空路由应退回登录页重试');
+  assert.match(main, /routeUnmatched\(/, '只有路由真的没匹配上才介入，避免打断正常加载');
 });
 
 test('Vue 内部渲染错误会上报给兼容层，不再静默变空白', async () => {
@@ -60,13 +78,14 @@ test('兼容层暴露 reportFatal，并在界面缺失时给出清缓存入口',
   assert.match(source, /清除缓存并重新加载/);
   assert.match(source, /getRegistrations/, '清缓存重载应注销旧 Service Worker');
   assert.match(source, /caches\.keys/, '清缓存重载应清空 Cache Storage');
+  assert.match(source, /复制诊断信息/, '手机端要能把现场带回来');
 });
 
 function createSandbox({ withSplash = false, moduleSupport = true } = {}) {
   const timers = [];
   const listeners = {};
   const bodyChildren = [];
-  const appEl = { children: [], innerHTML: '', appendChild() {} };
+  const appEl = { children: [], innerHTML: '', textContent: '', appendChild() {} };
   const splashEl = { id: 'boot-splash' };
 
   function makeElement() {
@@ -167,7 +186,7 @@ test('静态占位还在时，看门狗不会提前弹「界面没有显示出�
   assert.match(text, /清除缓存并重新加载/);
 });
 
-test('占位已被替换但界面为空时，看门狗给出白屏提示', async () => {
+test('占位已移除但界面为空时，看门狗给出白屏提示', async () => {
   const source = await readCompat();
   const env = createSandbox({ withSplash: false });
   vm.runInContext(source, env.context);
@@ -175,6 +194,40 @@ test('占位已被替换但界面为空时，看门狗给出白屏提示', async
   env.flushTimers(7000);
   assert.equal(env.bodyChildren.length, 1, '白屏必须被主动发现');
   assert.match(JSON.stringify(env.bodyChildren[0]), /界面没有显示出来/);
+});
+
+/**
+ * 线上真实故障：Vue 已挂载、占位被清掉，但路由还没解析出来，
+ * <router-view> 只渲染一个注释占位。此时 #app.innerHTML 是 "<!---->"，
+ * 非空！旧判据据此认定「界面已渲染」，看门狗全程沉默 → 用户看到永久白屏。
+ */
+test('只有注释节点的 #app 必须判为白屏，不能被 innerHTML 骗过去', async () => {
+  const source = await readCompat();
+  const env = createSandbox({ withSplash: false });
+  vm.runInContext(source, env.context);
+
+  // 真实 DOM 里注释不是 Element，所以 children 为空；innerHTML 却是 "<!---->"。
+  env.appEl.innerHTML = '<!---->';
+  env.appEl.textContent = '';
+
+  env.flushTimers(7000);
+  assert.equal(env.bodyChildren.length, 1, '注释节点不算内容，必须提示白屏');
+  assert.match(JSON.stringify(env.bodyChildren[0]), /界面没有显示出来/);
+});
+
+test('只有 App 自身的「读取中」加载态时，不算界面已绘制', async () => {
+  const source = await readCompat();
+  const env = createSandbox({ withSplash: true });
+  vm.runInContext(source, env.context);
+
+  // store.ready 还没翻转时 App.vue 渲染的就是这个节点。
+  env.appEl.children.push({
+    className: 'app-loading',
+    textContent: '读取中',
+    getBoundingClientRect: () => ({ width: 390, height: 844 }),
+  });
+
+  assert.equal(env.context.EdgeChatCompat.hasAppContent(), false, '加载态不是真实界面');
 });
 
 test('聊天页那种「子节点 fixed、#app 高度为 0」的正常界面不会被误判为白屏', async () => {
