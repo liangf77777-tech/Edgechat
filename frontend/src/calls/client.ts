@@ -26,7 +26,14 @@ interface CallClientOptions {
 export function createVoiceCallClient({ api, userId, onChange, onError,
   getMedia = () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false }),
   createPeer = config => new RTCPeerConnection(config),
-  createAudio = () => new Audio(),
+  createAudio = () => {
+    const element = new Audio();
+    // 部分移动浏览器只允许已挂载到文档的媒体元素播放远端流；
+    // 隐藏挂载可避免"通话已接通但听不到对方声音"。
+    element.style.display = 'none';
+    globalThis.document?.body?.appendChild(element);
+    return element;
+  },
   clientId = crypto.randomUUID() }: CallClientOptions) {
   let call: CallSession | null = null;
   let peer: RTCPeerConnection | null = null;
@@ -66,7 +73,7 @@ export function createVoiceCallClient({ api, userId, onChange, onError,
     if (peer) { peer.onicecandidate = null; peer.onconnectionstatechange = null; peer.ontrack = null; peer.close(); }
     peer = null;
     candidates = [];
-    if (audio) { audio.pause(); audio.srcObject = null; }
+    if (audio) { audio.pause(); audio.srcObject = null; audio.remove?.(); }
     audio = null;
   }
   function reset() {

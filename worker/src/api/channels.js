@@ -56,10 +56,17 @@ export function registerChannelRoutes(app) {
   app.get('/api/channels', async (c) => {
     const session = c.get('session');
     const channels = await listVisibleChannels(c.env.DB, session.userId);
+    // general 全员群组默认从所有客户端的会话列表中隐藏。
+    // 需要恢复时把 Worker 变量 SHOW_GENERAL_CHANNEL 设为 "true"；仅影响列表展示，
+    // 系统群数据、成员关系、改名/删除保护与系统公告逻辑全部保持不变。
+    const hideGeneral = String(c.env.SHOW_GENERAL_CHANNEL || '').trim().toLowerCase() !== 'true';
+    const visible = hideGeneral
+      ? channels.filter((channel) => !channel.isGeneral && !isGeneralChannel(channel))
+      : channels;
     return c.json({
-      channels,
-      publicChannels: channels.filter((channel) => channel.kind === 'public'),
-      privateChannels: channels.filter((channel) => channel.kind === 'private')
+      channels: visible,
+      publicChannels: visible.filter((channel) => channel.kind === 'public'),
+      privateChannels: visible.filter((channel) => channel.kind === 'private')
     });
   });
 

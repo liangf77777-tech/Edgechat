@@ -392,11 +392,12 @@ function returnToMobileConversationList() {
 async function bootstrap() {
   error.value = '';
   try {
-    await refreshSidebar();
-    if (isDemoMode && !activeRoom.value) {
-      const general = conversationItems.value.find((item) => item.isGeneral);
-      if (general) await selectConversation(general);
-    }
+		await refreshSidebar();
+		if (isDemoMode && !activeRoom.value) {
+			// general 全员群组已隐藏，默认落在第一个可见会话，避免进入空白聊天页。
+			const firstVisible = conversationItems.value[0];
+			if (firstVisible) await selectConversation(firstVisible);
+		}
   }
   catch (e) { error.value = e.message; }
 }

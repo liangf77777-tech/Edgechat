@@ -125,6 +125,8 @@ test("移动会话刷新资料仍保留原 access token 截止时间", async (t)
 
 test("bootstrap 和独立群列表只读，系统群成员仍由 schema 触发器提供", async (t) => {
 	const h = fixture(t);
+	// 该用例校验系统群成员关系，显式打开显示开关以绕过站点默认的 general 隐藏策略。
+	h.env.SHOW_GENERAL_CHANNEL = "true";
 	const session = await webSession(h);
 	for (const path of ["/bootstrap", "/channels"]) {
 		h.calls.length = 0;

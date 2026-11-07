@@ -8,7 +8,7 @@ beforeEach(async () => {
 	await setLocale(CHINESE_LOCALE);
 });
 
-test("general 在私信和其他群组之前永久置顶", () => {
+test("general 全员群组已从会话列表与公共群组中隐藏", () => {
 	const sidebar = useChatSidebar({
 		applyActiveChannel() {},
 		selectDm() {},
@@ -54,9 +54,9 @@ test("general 在私信和其他群组之前永久置顶", () => {
 
 	assert.deepEqual(
 		sidebar.conversationItems.value.map((item) => item.key),
-		["public:1", "dm:3", "private:2"],
+		["dm:3", "private:2"],
 	);
-	assert.equal(sidebar.conversationItems.value[0].subtitle, "全员群组");
+	assert.equal(sidebar.conversationItems.value.some((item) => item.isGeneral), false);
 	assert.deepEqual(
 		sidebar.publicGroupItems.value.map((item) => item.key),
 		["public:4"],

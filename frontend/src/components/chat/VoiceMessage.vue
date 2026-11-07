@@ -1,6 +1,6 @@
 <script setup>
 import { Pause, Play } from "@lucide/vue";
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import api from "../../api.js";
 import { t } from "../../i18n.js";
 import {
@@ -16,6 +16,8 @@ const props = defineProps({
 const audio = ref(null);
 const playing = ref(false);
 const failed = ref(false);
+// 自动播放被拦截 / 音源尚未就绪时保留播放器与重试入口，不永久降级为文件链接。
+const playbackBlocked = ref(false);
 const currentMs = ref(0);
 const measuredDurationMs = ref(0);
 const speed = ref(1);
@@ -29,23 +31,45 @@ const waveform = computed(() => {
 });
 
 function pauseOtherVoice(event) {
-	if (event.detail !== playbackKey.value) audio.value?.pause();
+	if (event.detail !== playbackKey.value) {
+		audio.value?.pause();
+		playbackBlocked.value = false;
+	}
 }
-
-globalThis.addEventListener?.("edgechat:voice-play", pauseOtherVoice);
 
 async function togglePlayback() {
 	if (!audio.value) return;
 	if (audio.value.paused) {
-		globalThis.dispatchEvent(new CustomEvent("edgechat:voice-play", { detail: playbackKey.value }));
+		globalThis.dispatchEvent?.(new CustomEvent("edgechat:voice-play", { detail: playbackKey.value }));
 		try {
 			await audio.value.play();
+			playbackBlocked.value = false;
+			failed.value = false;
 		} catch {
-			failed.value = true;
+			// 浏览器自动播放策略或临时缓冲不足都会让 play() 失败；
+			// 这类失败可以重试，不能把整条语音消息判成损坏。
+			playbackBlocked.value = true;
 		}
 	} else {
 		audio.value.pause();
 	}
+}
+
+async function retryPlayback() {
+	if (!audio.value) return;
+	try {
+		await audio.value.play();
+		playbackBlocked.value = false;
+		failed.value = false;
+	} catch {
+		playbackBlocked.value = true;
+	}
+}
+
+function handleAudioError() {
+	// 只有音源确实不可用（404 / 解码失败 / 附件存储未绑定）时才降级为下载链接。
+	failed.value = true;
+	playbackBlocked.value = false;
 }
 
 function updateMetadata() {
@@ -74,6 +98,16 @@ function cycleSpeed() {
 	if (audio.value) audio.value.playbackRate = speed.value;
 }
 
+// 复用组件切换附件时清空上一次的播放状态，避免新语音继承旧的失败标记。
+watch(playbackKey, () => {
+	playing.value = false;
+	failed.value = false;
+	playbackBlocked.value = false;
+	currentMs.value = 0;
+	measuredDurationMs.value = 0;
+});
+
+onMounted(() => globalThis.addEventListener?.("edgechat:voice-play", pauseOtherVoice));
 onBeforeUnmount(() => {
 	globalThis.removeEventListener?.("edgechat:voice-play", pauseOtherVoice);
 	audio.value?.pause();
@@ -86,13 +120,14 @@ onBeforeUnmount(() => {
 			ref="audio"
 			:src="attachmentUrl"
 			preload="metadata"
+			playsinline
 			@loadedmetadata="updateMetadata"
 			@durationchange="updateMetadata"
 			@timeupdate="updateProgress"
 			@play="playing = true"
 			@pause="playing = false"
 			@ended="resetProgress"
-			@error="failed = true"
+			@error="handleAudioError"
 		/>
 		<template v-if="!failed">
 			<button
@@ -127,6 +162,15 @@ onBeforeUnmount(() => {
 				</div>
 				<div class="voice-message__meta">
 					<span>{{ formatVoiceDuration(playing || currentMs ? currentMs : durationMs) }}</span>
+					<button
+						v-if="playbackBlocked"
+						type="button"
+						class="voice-message__speed"
+						:aria-label="t('common.retry')"
+						@click="retryPlayback"
+					>
+						{{ t('common.retry') }}
+					</button>
 					<button type="button" class="voice-message__speed" :aria-label="t('voice.speed')" @click="cycleSpeed">
 						{{ speed }}x
 					</button>

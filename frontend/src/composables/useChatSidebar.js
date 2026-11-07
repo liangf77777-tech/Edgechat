@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import api from "../api.js";
 import { compareLocalized, formatDate, t } from "../i18n.js";
+import { visibleChannels } from "../channel-visibility.js";
 
 function formatListTime(value) {
 	if (!value) {
@@ -49,7 +50,7 @@ export function useChatSidebar({ applyActiveChannel, selectDm, sidebarApi = api 
 			source: dm,
 		}));
 
-		const channelItems = channels.value
+		const channelItems = visibleChannels(channels.value)
 			.filter((channel) => channel.isMember)
 			.map((channel) =>
 				mapChannelItem(
@@ -81,7 +82,7 @@ export function useChatSidebar({ applyActiveChannel, selectDm, sidebarApi = api 
 	});
 
 	const publicGroupItems = computed(() =>
-		channels.value
+		visibleChannels(channels.value)
 			.filter((channel) => channel.kind === "public" && !channel.isMember)
 			.map((channel) =>
 					mapChannelItem(channel, t('chat.memberCount', { count: Number(channel.memberCount || 0) })),

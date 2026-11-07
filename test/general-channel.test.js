@@ -69,8 +69,8 @@ function createRouteHarness(resultSets = []) {
 
 	return {
 		calls,
-		request(path, init) {
-			return app.fetch(new Request(`https://example.com${path}`, init), { DB: db });
+		request(path, init, env = {}) {
+			return app.fetch(new Request(`https://example.com${path}`, init), { DB: db, ...env });
 		},
 	};
 }
@@ -123,6 +123,22 @@ test("成员管理与两个删除入口都会保护 general", async () => {
 			assert.equal(harness.calls.length, path.includes('/admin/') ? 1 : 2);
 		assert.equal(harness.calls[0].ran, false);
 	}
+});
+
+test("频道列表默认隐藏 general，SHOW_GENERAL_CHANNEL=true 可恢复", async () => {
+	const rows = [
+		{ id: 1, name: "general", kind: "public", is_general: 1, is_member: 1 },
+		{ id: 2, name: "team", kind: "public", is_general: 0, is_member: 1 },
+	];
+	const hidden = createRouteHarness([rows]);
+	const hiddenBody = await (await hidden.request("/api/channels")).json();
+	assert.deepEqual(hiddenBody.channels.map((channel) => channel.id), [2]);
+	assert.deepEqual(hiddenBody.publicChannels.map((channel) => channel.id), [2]);
+
+	const shown = createRouteHarness([rows]);
+	const shownBody = await (await shown.request("/api/channels", undefined, { SHOW_GENERAL_CHANNEL: "true" })).json();
+	assert.deepEqual(shownBody.channels.map((channel) => channel.id), [1, 2]);
+	assert.deepEqual(shownBody.publicChannels.map((channel) => channel.id), [1, 2]);
 });
 
 test("general 允许更新头像但拒绝改名", async () => {
