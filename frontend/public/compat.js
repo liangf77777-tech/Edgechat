@@ -309,11 +309,48 @@
 
   win.__edgechatBoot = {
     at: new Date().getTime(),
-    compat: '2026-11-07b',
+    compat: '2026-11-08a',
     mounted: false,
     painted: false,
     note: 'boot-trace'
   };
+
+  // 构建工具「故意抛错」做特性探测时产生的错误，不是故障。
+  //
+  // 最典型的是 @vitejs/plugin-legacy v8：它把「浏览器是否支持
+  // import.meta.resolve」当成新内核判据，并在 index.html 的内联 module 与
+  // 现代包入口 chunk 顶部插入
+  //   import'data:text/javascript,if(!import.meta.resolve)throw Error(
+  //     "import.meta.resolve not supported")'
+  // 而该 API 只有 Chrome 105+ / Safari 16.4+ 才有 —— iOS 12~16.3 的 Safari、
+  // Android WebView < 105、UC/QQ 内核一进页面就抛，于是「现代包整段求值失败 +
+  // 兼容层弹出页面加载遇到问题」，用户彻底打不开。
+  //
+  // 构建侧已经在 frontend/legacy-guard-probe.js 里把探针从产物中删掉了；这里
+  // 再兜一层，是为了覆盖「手机上还缓存着上一版 index.html / chunk」的情况：
+  // 旧文件照样会抛，但绝不能因此把已经能正常渲染的界面盖住。
+  var BENIGN_BOOT_ERRORS = [
+    /import\.meta\.resolve/i,
+    /vite:\s*loading legacy chunks/i
+  ];
+
+  function isBenignBootError(message) {
+    var text = String(message || '');
+    if (!text) return false;
+    for (var b = 0; b < BENIGN_BOOT_ERRORS.length; b += 1) {
+      if (BENIGN_BOOT_ERRORS[b].test(text)) return true;
+    }
+    return false;
+  }
+
+  function rememberError(message) {
+    try {
+      var boot = win.__edgechatBoot;
+      if (!boot) return;
+      boot.errors = boot.errors || [];
+      if (message && boot.errors.length < 6) boot.errors.push(message);
+    } catch (e) {}
+  }
 
   // 界面是否真的画出来了。
   //
@@ -511,6 +548,27 @@
     return button;
   }
 
+  // 非致命提示（脚本里一条迟到的、可自愈的错误）在界面真正画出来后自行退场。
+  // 它带着 z-index:2147483647 铺满全屏，只要留在 DOM 里就会永久盖住本来正常的
+  // 页面 —— 上一版正是这样：iOS 16.3 及以下抛一条特性探测错误、卡片弹出，
+  // 即便备份包后来渲染成功，用户也只看得到这张卡片。
+  function watchNoticeRecovery(box) {
+    var ticks = 0;
+    var recheck = function () {
+      if (!box || !box.parentNode) return;
+      if (hasAppContent()) {
+        try {
+          box.parentNode.removeChild(box);
+        } catch (e) {}
+        noticeShown = false;
+        return;
+      }
+      ticks += 1;
+      if (ticks < 80) win.setTimeout(recheck, 500);
+    };
+    win.setTimeout(recheck, 600);
+  }
+
   function showBootNotice(title, detail, options) {
     if (noticeShown || !doc) return;
     var opts = options || {};
@@ -563,16 +621,22 @@
     box.appendChild(card);
     if (doc.body) doc.body.appendChild(box);
     else if (doc.documentElement) doc.documentElement.appendChild(box);
+    if (!opts.force) watchNoticeRecovery(box);
   }
 
   function onBootError(event) {
     var message = '';
     if (event && event.message) message = String(event.message);
     else if (event && event.reason) message = String(event.reason && event.reason.message || event.reason);
-    try {
-      win.__edgechatBoot.errors = win.__edgechatBoot.errors || [];
-      if (message && win.__edgechatBoot.errors.length < 6) win.__edgechatBoot.errors.push(message);
-    } catch (e) {}
+    rememberError(message);
+    // 特性探测类的「故意抛错」只记录，不弹卡片：此时界面往往完全正常。
+    if (isBenignBootError(message)) {
+      try {
+        win.__edgechatBoot.ignored = win.__edgechatBoot.ignored || [];
+        if (win.__edgechatBoot.ignored.length < 6) win.__edgechatBoot.ignored.push(message);
+      } catch (e) {}
+      return;
+    }
     win.setTimeout(function () {
       // 这里不加 force：已经成功挂载的界面不应该被一条迟到的错误盖住。
       showBootNotice(
@@ -586,12 +650,9 @@
   // 供 main.js 的 Vue errorHandler 调用：Vue 内部错误不会触发 window error 事件，
   // 过去它们只会让界面静默变空。
   function reportFatal(message, force) {
-    if (win.__edgechatBoot) {
-      try {
-        win.__edgechatBoot.errors = win.__edgechatBoot.errors || [];
-        if (message) win.__edgechatBoot.errors.push(String(message));
-      } catch (e) {}
-    }
+    rememberError(message);
+    // 业务层也可能把探测类错误当成渲染失败转上来，同样不该弹卡片。
+    if (isBenignBootError(message)) return;
     showBootNotice(
       '界面渲染失败',
       (message ? '错误信息：' + message + '。' : '') +
