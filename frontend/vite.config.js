@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveBuildMetadata } from './build-metadata.js';
+import { legacyGuardProbePlugin } from './legacy-guard-probe.js';
 
 const dirname = fileURLToPath(new URL('.', import.meta.url));
 const buildMetadata = resolveBuildMetadata();
@@ -34,6 +35,12 @@ try {
 } catch (error) {
   console.warn('[edgechat] legacy 备份包未启用：', error && error.message ? error.message : error);
 }
+
+// 必须排在 plugin-legacy 之后（enforce: 'post'）：它就在现代包入口 chunk 顶部
+// 和 index.html 里插了一段「没有 import.meta.resolve 就抛错」的探针。
+// 这个 API 只有 Chrome 105+ / Safari 16.4+ 才有，iOS 12~16.3、Android WebView
+// < 105、UC/QQ 内核一进页面就被它抛死 —— 手机端「页面加载遇到问题」的根因。
+plugins.push(legacyGuardProbePlugin());
 
 // 注意：这里必须导出「对象」而不是工厂函数。
 // demo 与 capacitor 的构建配置都用 mergeConfig(baseConfig, ...) 合并本配置，
