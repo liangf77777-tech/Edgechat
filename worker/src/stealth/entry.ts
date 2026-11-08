@@ -3,6 +3,8 @@ import { getLoginVerification } from '../data/login-verification.ts';
 import { validateSession } from '../session.js';
 import { cookieRequestAllowed, extractSessionToken } from '../session-cookie.ts';
 import { gatePage, notFound, privateHeaders, submitGate } from './gate.ts';
+import { publicAssetResponse } from './asset-cache.ts';
+import { httpsRedirect, httpsRedirectTarget, withTransportHeaders } from '../transport.ts';
 import { errorResponse, v1ErrorResponse } from '../utils.js';
 
 function privateResponse(response: Response) {
@@ -18,6 +20,10 @@ async function assets(request: Request, env, settings, authenticated?: boolean) 
   if (!env.ASSETS) return notFound();
   const response = await env.ASSETS.fetch(request);
   if (!response.headers.get('content-type')?.includes('text/html')) {
+    // 隐身关闭时静态资源是公开的：让浏览器长期缓存带内容哈希的产物，
+    // 大陆弱网下重复访问不再每次全量下载。隐身开启时维持 no-store，
+    // 避免未认证客户端通过缓存侧信道探测产品是否存在。
+    if (!settings?.enabled) return publicAssetResponse(response, new URL(request.url).pathname);
     return privateResponse(response);
   }
   // 关闭模式的脚本/图片仍为公开资源，无需逐个查询用户；只有 HTML 的 Cookie 恢复需要验证。
@@ -50,6 +56,15 @@ async function integration(request: Request, env, ctx, dispatch) {
 
 export function createSiteEntry(dispatch) {
   return async (request: Request, env, ctx) => {
+    // 明文请求在隐身判定之前就跳 HTTPS：80 端口原本直接返回 200，
+    // 大陆移动网络下会被链路注入；HSTS 又因边缘的 max-age=0 形同关闭。
+    const upgrade = httpsRedirectTarget(request);
+    if (upgrade) return httpsRedirect(upgrade);
+    return withTransportHeaders(await siteEntry(dispatch, request, env, ctx), request);
+  };
+}
+
+async function siteEntry(dispatch, request: Request, env, ctx) {
     try {
       const settings = await getStealthSettings(env.DB);
       const url = new URL(request.url);
@@ -95,5 +110,4 @@ export function createSiteEntry(dispatch) {
       if (path.startsWith('/api/')) return privateResponse(errorResponse('权限服务暂不可用', 503));
       return new Response('Service Unavailable', { status: 503, headers: privateHeaders });
     }
-  };
 }

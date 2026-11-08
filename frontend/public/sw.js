@@ -1,8 +1,23 @@
-// Edgechat minimal service worker.
-// Purpose: satisfy the PWA installability requirement so Chrome/Edge show the
-// install button in the address bar. It intentionally does NOT cache anything
-// and does NOT intercept API, /files, or WebSocket traffic — every request is
-// passed straight through to the network.
+// Edgechat service worker.
+// 除 PWA 可安装条件外，还负责缓存「带内容哈希、永不改变」的 /assets/* 构建产物。
+// 中国大陆到 Cloudflare 边缘的 RTT 很高（实测落在 AMS），每次打开都重新下载
+// 全部 JS/CSS 会让弱网手机反复超时。/assets/* 文件名由 Vite 按内容生成，
+// 内容一变文件名就变，因此 cache-first 不会出现旧代码残留。
+//
+// 严格不拦截：HTML 导航、/api/、/files/、WebSocket、非 GET、跨域请求。
+// 这些请求一律交给浏览器默认网络栈——过去在 SW 里 respondWith 导航请求曾
+// 导致 mobile Safari / 微信 WKWebView 整页空白，这个约束不能放宽。
+const STATIC_CACHE = 'edgechat-assets-v1';
+
+function immutableAsset(request) {
+  if (request.method !== 'GET') return false;
+  let url;
+  try { url = new URL(request.url); } catch { return false; }
+  if (url.origin !== self.location.origin) return false;
+  // 只放行 Vite 产物目录；compat.js / sw.js / manifest / 图标不带哈希，不缓存。
+  if (!url.pathname.startsWith('/assets/')) return false;
+  return /\.(?:js|mjs|css|svg|png|jpe?g|webp|woff2?|ttf)$/i.test(url.pathname);
+}
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -43,14 +58,22 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Keep a fetch listener (older Chrome still requires one for the install
-// prompt) but never call respondWith. Previously every same-origin GET,
-// including the HTML navigation itself, went through respondWith(fetch(req)).
-// On mobile Safari / WeChat WKWebView a failed or redirected navigation fetch
-// inside a Service Worker makes the whole page render blank with no recovery.
-// Passing through to the browser's default network stack removes that risk.
-self.addEventListener('fetch', () => {
-  // Intentionally empty: no caching, no interception, no stale assets.
+// 只为不可变的带哈希资源启用 cache-first。其余请求（尤其是导航、API、WS）
+// 不调用 respondWith，完全交由浏览器默认网络栈，保留原有的白屏防护语义。
+self.addEventListener('fetch', (event) => {
+  if (!immutableAsset(event.request)) return;
+  event.respondWith(
+    caches.open(STATIC_CACHE).then(async (cache) => {
+      const cached = await cache.match(event.request);
+      if (cached) return cached;
+      const response = await fetch(event.request);
+      // 只缓存成功响应；失败时直接把错误交回浏览器，不伪造兜底内容。
+      if (response && response.ok) {
+        try { await cache.put(event.request, response.clone()); } catch { /* 配额不足时忽略 */ }
+      }
+      return response;
+    }),
+  );
 });
 
 // Focus (or open) the app when a system notification is clicked, and tell the

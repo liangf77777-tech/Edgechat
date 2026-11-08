@@ -686,6 +686,7 @@ watch(
       v-if="contactsVisited"
       v-show="isContactsView"
       :visible="isContactsView"
+      :conversations="dms"
       @open-navigation="showMobileNavigation = true"
       @open-profile="openLocalUserProfile"
       @unblocked="applyBlockState($event, false)"

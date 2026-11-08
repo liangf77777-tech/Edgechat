@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, type Ref } from "vue";
 import type { UserSummary } from "../../../shared/user-profile.ts";
 import api from "../api.js";
 
@@ -8,7 +8,34 @@ type ContactsApi = {
 	unblockUser: (userId: number) => Promise<{ blockedByMe: boolean }>;
 };
 
-export function useContacts(contactsApi: ContactsApi = api) {
+/** 会话列表里只需要「对端 + 最后一条消息时间 + 未读数」这三样信息。 */
+export type ContactConversation = {
+	otherUser?: { id: number | string } | null;
+	lastMessageAt?: string | null;
+	unreadCount?: number | string | null;
+};
+
+export type ContactEntry = UserSummary & {
+	lastMessageAt?: string;
+	unreadCount?: number;
+};
+
+type UseContactsOptions = {
+	/** 传入时「全部」视图只保留真正聊过天的好友；不传时保持完整目录语义。 */
+	conversations?: Ref<ContactConversation[]>;
+};
+
+// D1 的 CURRENT_TIMESTAMP 是 UTC 但没有时区标记，直接 Date.parse 会得到 NaN。
+export function contactTimeValue(value?: string | null): number {
+	if (!value) return 0;
+	const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(value)
+		? `${value.replace(" ", "T")}Z`
+		: value;
+	const parsed = Date.parse(normalized);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function useContacts(contactsApi: ContactsApi = api, options: UseContactsOptions = {}) {
 	const users = ref<UserSummary[]>([]);
 	const query = ref("");
 	const view = ref<"all" | "blocked">("all");
@@ -30,10 +57,39 @@ export function useContacts(contactsApi: ContactsApi = api) {
 				|| left.id - right.id;
 		}),
 	);
-	const filteredUsers = computed(() => {
+
+	// 「说过话」的判据是 DM 里存在至少一条未删除的消息（lastMessageAt 非空）。
+	// 仅仅 openDm 建过会话、但一句话都没发过的人不算好友。
+	const talkedUsers = computed<ContactEntry[]>(() => {
+		const conversations = options.conversations?.value;
+		if (!conversations) return sortedUsers.value;
+		const activity = new Map<number, { lastMessageAt: string; unreadCount: number }>();
+		for (const conversation of conversations) {
+			const at = conversation?.lastMessageAt;
+			if (!at) continue;
+			const id = Number(conversation?.otherUser?.id);
+			if (!Number.isFinite(id) || activity.has(id)) continue;
+			activity.set(id, {
+				lastMessageAt: String(at),
+				unreadCount: Math.max(0, Number(conversation?.unreadCount || 0) || 0),
+			});
+		}
+		return users.value
+			.filter((user) => activity.has(Number(user.id)))
+			.map((user) => ({ ...user, ...activity.get(Number(user.id)) }))
+			.sort((left, right) =>
+				contactTimeValue(right.lastMessageAt) - contactTimeValue(left.lastMessageAt)
+				|| collator.compare(left.displayName || left.username, right.displayName || right.username)
+				|| left.id - right.id,
+			);
+	});
+
+	const filteredUsers = computed<ContactEntry[]>(() => {
+		// 拉黑视图是独立名单，不受「有没有聊过天」影响。
+		const base = view.value === "blocked" ? sortedUsers.value : talkedUsers.value;
 		const needle = query.value.trim().toLocaleLowerCase();
-		if (!needle) return sortedUsers.value;
-		return sortedUsers.value.filter((user) =>
+		if (!needle) return base;
+		return base.filter((user) =>
 			[user.displayName, user.username].some((value) =>
 				String(value || "").toLocaleLowerCase().includes(needle),
 			),

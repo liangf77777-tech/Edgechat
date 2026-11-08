@@ -104,8 +104,17 @@ async function initializeSession() {
     state.token = payload.session.token;
     setStoredToken(state.token);
     collectLoginNetwork(payload.session);
-  } catch {
-    clearAuthState();
+  } catch (error) {
+    const status = Number(error && error.status);
+    // 只有服务端明确判定凭证无效时才清除登录态。超时、断网、老内核缺失
+    // AbortSignal.timeout 这类链路/运行时问题一律保留 token：过去把它们当成
+    // 登出，导致大陆弱网手机「登录→跳回登录页」无限循环，永远进不了聊天页。
+    // 真正的 401 会由 api 层派发 auth-invalid，仍会正常回到登录页。
+    if (status === 401 || status === 403) {
+      clearAuthState();
+    } else if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('[edgechat] 会话恢复受网络影响，保留本地登录态：', error);
+    }
   } finally {
     state.ready = true;
   }
@@ -193,6 +202,12 @@ export default {
   },
   get session() {
     return state.session;
+  },
+  // 会话恢复还没回来时，本地凭据或网关 Cookie 足以证明用户可能已登录。
+  // 路由守卫据此乐观放行，避免弱网下被卡在登录页；若后台校验返回 401，
+  // api 层会派发 auth-invalid 并把页面带回登录页。
+  get hasCredentials() {
+    return Boolean(state.token) || Boolean(hasDocumentSession);
   },
   get site() {
     return state.site;

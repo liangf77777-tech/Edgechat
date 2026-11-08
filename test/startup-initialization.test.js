@@ -46,7 +46,7 @@ function startup({ token = '', native = false, origin = '', documentSession = fa
 function routeGuard(store) {
   const router = { beforeEach(guard) { this.guard = guard; } };
   runInNewContext(withoutImports(read('router.js')).replace('export default router;', ''), {
-    store, isCapacitorAndroid: false, isDemoMode: false,
+    store, isCapacitorAndroid: false, isDemoMode: false, setTimeout, clearTimeout,
     createRouter: () => router, createWebHistory() {}, createWebHashHistory() {}
   });
   return router.guard;
@@ -57,7 +57,7 @@ test('the entry point mounts the application while authentication is still pendi
   runInNewContext(withoutImports(read('main.js')), {
     window: {}, navigator: {}, document: {}, App: {}, router: { isReady: () => Promise.resolve() },
     Capacitor: { isNativePlatform: () => false },
-    localStorage: { getItem: () => null },
+    localStorage: { getItem: () => null }, setTimeout, clearTimeout,
     installChunkLoadRecovery() {}, takeNotificationRoomTarget: () => null,
     initializeI18n: () => Promise.resolve(),
     store: { initialize() { calls.push('initialize'); return new Promise(() => {}); } },
@@ -122,15 +122,30 @@ test('metadata failures preserve defaults and cannot clear a restored session', 
   assert.equal(calls.metadata.at(-1).siteName, 'Edgechat');
 });
 
-test('invalid or timed out sessions keep protected routes closed while metadata is pending', async () => {
+test('服务端判定凭证失效时关闭受保护路由并清除本地登录态', async () => {
   const session = Promise.withResolvers();
   const { store, storedToken } = startup({ token: 'expired', session: session.promise });
   const navigation = routeGuard(store)({ path: '/', meta: {} });
-  session.reject(new Error('session unavailable'));
+  const unauthorized = new Error('unauthorized');
+  unauthorized.status = 401;
+  session.reject(unauthorized);
   assert.equal(await navigation, '/login');
   assert.equal(store.ready, true);
   assert.equal(store.session, null);
   assert.equal(storedToken(), '');
+});
+
+test('网络超时不清除登录态，弱网手机可乐观进入聊天主界面', async () => {
+  const session = Promise.withResolvers();
+  const { store, storedToken } = startup({ token: 'valid-but-slow', session: session.promise });
+  const navigation = routeGuard(store)({ path: '/', meta: {} });
+  // 没有 HTTP status 即链路问题（超时/断网/老内核 TypeError），不是登出。
+  session.reject(new Error('network timeout'));
+  assert.equal(await navigation, true);
+  assert.equal(store.ready, true);
+  assert.equal(store.session, null);
+  assert.equal(store.hasCredentials, true);
+  assert.equal(storedToken(), 'valid-but-slow', '弱网下不得把用户踢出登录态');
 });
 
 test('gateway startup drops stale bearer credentials before restoring the document cookie session', async () => {
@@ -171,17 +186,21 @@ test('late native metadata cannot overwrite a newly configured server', async ()
   assert.equal(store.site.siteName, 'New site');
 });
 
-test('site and session API requests abort after a bounded ten-second wait', async (t) => {
-  for (const method of ['getSite', 'session']) {
+test('site and session API requests abort after a bounded wait', async (t) => {
+  // 会话恢复给到 12 秒并对「无 HTTP 状态」的链路失败重试一次；站点元数据保持 10 秒。
+  for (const [method, expectedTimeout] of [['getSite', 10000], ['session', 12000]]) {
     const controller = new AbortController();
     t.mock.method(AbortSignal, 'timeout', (milliseconds) => {
-      assert.equal(milliseconds, 10000);
+      assert.equal(milliseconds, expectedTimeout);
       return controller.signal;
     });
     let requestUrl;
+    let fetchCalls = 0;
     t.mock.method(globalThis, 'fetch', (url, { signal }) => {
       requestUrl = url;
+      fetchCalls += 1;
       return new Promise((_, reject) => {
+        if (signal.aborted) { reject(signal.reason); return; }
         signal.addEventListener('abort', () => reject(signal.reason), { once: true });
       });
     });
@@ -189,6 +208,7 @@ test('site and session API requests abort after a bounded ten-second wait', asyn
     controller.abort(new DOMException('Timed out', 'TimeoutError'));
     await assert.rejects(request, { name: 'TimeoutError' });
     assert.equal(requestUrl, method === 'getSite' ? '/api/site' : '/api/auth/session');
+    assert.equal(fetchCalls, method === 'session' ? 2 : 1, '会话恢复对网络超时重试一次');
     t.mock.restoreAll();
   }
 });

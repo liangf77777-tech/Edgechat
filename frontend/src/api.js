@@ -14,6 +14,23 @@ function buildHeaders(extra = {}) {
   return headers;
 }
 
+// AbortSignal.timeout 只有 Safari 16 / Chrome 103+ 才有。compat.js 会补上，
+// 但启动链路上的 session/getSite 请求必须再兜一层：老内核里直接调用一个
+// 不存在的静态方法会同步抛 TypeError，被 store 误判为「登录失效」。
+function timeoutSignal(milliseconds) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(milliseconds);
+  }
+  if (typeof AbortController === 'undefined') return undefined;
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), milliseconds);
+  return controller.signal;
+}
+
+// 弱网（尤其中国大陆到 Cloudflare 海外边缘）下 fetch 可能永久挂起，
+// 让聊天页一直停在加载态。没有显式 signal 的请求统一给一个兜底超时。
+const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
+
 async function request(path, options = {}) {
   if (isDemoMode) {
     try {
@@ -23,39 +40,52 @@ async function request(path, options = {}) {
     }
   }
 
-  const response = await fetch(resolveServerUrl(`${apiPrefix}${path}`), {
-    ...options,
-    headers: buildHeaders(options.headers),
-    body:
-      options.body instanceof FormData || typeof options.body === 'string'
-        ? options.body
-        : options.body
-          ? JSON.stringify(options.body)
-          : undefined
-  });
-
-  const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text();
-
-  if (!response.ok) {
-    const rawMessage = payload?.error?.message || payload?.error || payload || t('common.requestFailed');
-    const error = new Error(localizeErrorMessage(rawMessage));
-    error.status = response.status;
-    error.payload = payload;
-    error.rawMessage = rawMessage;
-
-    if ((response.status === 401 || (isGatewayMode && response.status === 404
-      && !contentType.includes('application/json'))) && typeof window !== 'undefined') {
-      dispatchAuthInvalid(error.message);
-    }
-    if (response.status === 403 && path.startsWith('/admin/') && typeof window !== 'undefined') window.dispatchEvent(new Event('authorization-changed'));
-
-    throw error;
+  let timeoutId = null;
+  let signal = options.signal;
+  if (!signal && typeof AbortController !== 'undefined') {
+    const controller = new AbortController();
+    signal = controller.signal;
+    timeoutId = setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS);
   }
 
-  return payload;
+  try {
+    const response = await fetch(resolveServerUrl(`${apiPrefix}${path}`), {
+      ...options,
+      signal,
+      headers: buildHeaders(options.headers),
+      body:
+        options.body instanceof FormData || typeof options.body === 'string'
+          ? options.body
+          : options.body
+            ? JSON.stringify(options.body)
+            : undefined
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    const payload = contentType.includes('application/json')
+      ? await response.json()
+      : await response.text();
+
+    if (!response.ok) {
+      const rawMessage = payload?.error?.message || payload?.error || payload || t('common.requestFailed');
+      const error = new Error(localizeErrorMessage(rawMessage));
+      error.status = response.status;
+      error.payload = payload;
+      error.rawMessage = rawMessage;
+
+      if ((response.status === 401 || (isGatewayMode && response.status === 404
+        && !contentType.includes('application/json'))) && typeof window !== 'undefined') {
+        dispatchAuthInvalid(error.message);
+      }
+      if (response.status === 403 && path.startsWith('/admin/') && typeof window !== 'undefined') window.dispatchEvent(new Event('authorization-changed'));
+
+      throw error;
+    }
+
+    return payload;
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  }
 }
 
 export default {
@@ -75,15 +105,15 @@ export default {
   adminAudit(offset = 0) { return request(`/admin/audit?offset=${offset}`); },
   adminStorage() { return request('/admin/storage'); },
   callConfig(roomId) {
-    return request(`/calls/${roomId}/config`, { signal: AbortSignal.timeout(10000) });
+    return request(`/calls/${roomId}/config`, { signal: timeoutSignal(10000) });
   },
   callAction(roomId, body) {
     return request(`/calls/${roomId}/action`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(10000), keepalive: ['hangup', 'reject'].includes(body.type)
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: timeoutSignal(10000), keepalive: ['hangup', 'reject'].includes(body.type)
     });
   },
   callIce(roomId, callId, clientId) {
-    return request(`/calls/${roomId}/ice?${new URLSearchParams({ callId, clientId })}`, { signal: AbortSignal.timeout(15000) });
+    return request(`/calls/${roomId}/ice?${new URLSearchParams({ callId, clientId })}`, { signal: timeoutSignal(15000) });
   },
   adminStealth() {
     return request('/admin/stealth');
@@ -116,11 +146,23 @@ export default {
       ...options, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { probeId, ...result }
     });
   },
-  session() {
-    return request('/auth/session', { signal: AbortSignal.timeout(10000) });
+  async session() {
+    // 大陆弱网下首包抖动很常见，给会话恢复一次重试；明确的 4xx（凭证失效）
+    // 不重试，立刻交给上层回到登录页。
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await request('/auth/session', { signal: timeoutSignal(12000) });
+      } catch (error) {
+        lastError = error;
+        const status = Number(error && error.status);
+        if (status >= 400 && status < 500) throw error;
+      }
+    }
+    throw lastError;
   },
   getSite() {
-    return request('/site', { signal: AbortSignal.timeout(10000) });
+    return request('/site', { signal: timeoutSignal(10000) });
   },
   changePassword(payload) {
     return request('/auth/change-password', {

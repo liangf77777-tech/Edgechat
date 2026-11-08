@@ -75,10 +75,16 @@ test('聊天页高度不再依赖 100dvh 作为唯一回退', async () => {
   assert.match(app, /min-height: 100vh;\s*min-height: 100dvh;/);
 });
 
-test('Service Worker 不再拦截导航请求', async () => {
+test('Service Worker 只缓存带哈希的不可变资源，不拦截导航与 API', async () => {
   const sw = await read('../frontend/public/sw.js');
-  assert.doesNotMatch(sw, /event\.respondWith/);
   assert.match(sw, /addEventListener\('fetch'/);
+  // respondWith 只能出现在 immutableAsset 守卫之后；导航、/api/、/files/、
+  // WebSocket、非 GET、跨域请求一律透传，避免 mobile Safari / 微信 WKWebView 白屏。
+  assert.match(sw, /if \(!immutableAsset\(event\.request\)\) return;/);
+  assert.match(sw, /event\.respondWith/);
+  assert.match(sw, /url\.pathname\.startsWith\('\/assets\/'\)/);
+  assert.doesNotMatch(sw, /request\.mode === 'navigate'[\s\S]*respondWith/);
+  assert.match(sw, /if \(response && response\.ok\)/);
 });
 
 test('i18n 模块顶层不再调用老内核缺失的运行时 API', async () => {

@@ -237,6 +237,10 @@ try {
     console.warn('[edgechat] i18n 初始化失败，使用默认语言：', error);
   }
 }
-Promise.resolve(i18nReady)
-  .catch(() => {})
-  .then(mountApp);
+// 语言包是动态 import：大陆弱网下若请求挂起（既不 resolve 也不 reject），
+// 过去会永远停在「加载中…」占位，界面根本不挂载。这里给一个 3 秒竞速，
+// 超时就用默认语言先挂载，语言包晚到时再响应式切换，不影响聊天主界面。
+Promise.race([
+  Promise.resolve(i18nReady).catch(() => {}),
+  new Promise((resolve) => setTimeout(resolve, 3000))
+]).then(mountApp);

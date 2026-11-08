@@ -131,3 +131,48 @@ test("切换通讯录视图丢弃迟到响应，解除操作不重复提交", as
 	assert.equal(contacts.filteredUsers.value.length, 0);
 	contacts.dispose();
 });
+
+test('通讯录只保留有消息往来的好友并按最近联系时间排序', async () => {
+	const { ref } = await import('vue');
+	const conversations = ref([
+		{ otherUser: { id: 1 }, lastMessageAt: '2026-11-01 10:00:00', unreadCount: 2 },
+		{ otherUser: { id: 2 }, lastMessageAt: '2026-11-08 09:00:00', unreadCount: 0 },
+		// 建过 DM 但一句话没说过，不算「聊过的好友」。
+		{ otherUser: { id: 3 }, lastMessageAt: null, unreadCount: 0 },
+	]);
+	const contacts = useContacts({
+		async getContacts() {
+			return { users: [
+				{ id: 1, username: 'alice', displayName: 'Alice', avatarUrl: '' },
+				{ id: 2, username: 'bob', displayName: 'Bob', avatarUrl: '' },
+				{ id: 3, username: 'silent', displayName: 'Silent', avatarUrl: '' },
+			] };
+		},
+	}, { conversations });
+	await contacts.load();
+	assert.deepEqual(contacts.filteredUsers.value.map((user) => user.id), [2, 1]);
+	assert.equal(contacts.filteredUsers.value[0].unreadCount, 0);
+	assert.equal(contacts.filteredUsers.value[1].unreadCount, 2);
+	contacts.query.value = 'ALICE';
+	assert.deepEqual(contacts.filteredUsers.value.map((user) => user.id), [1]);
+	contacts.query.value = '';
+	// 拉黑视图是独立名单，不受会话过滤影响。
+	await contacts.selectView('blocked');
+	assert.equal(contacts.filteredUsers.value.length, 3);
+	contacts.dispose();
+});
+
+test('通讯录页面按时间分组、展示未读与最近联系时间，并接收会话数据', () => {
+	const read = (path) => readFileSync(new URL(`../frontend/src/${path}`, import.meta.url), 'utf8');
+	const page = read('pages/ContactsPage.vue');
+	const chat = read('pages/ChatPage.vue');
+	assert.match(page, /useContacts\(undefined, \{ conversations: conversationsRef \}\)/);
+	assert.match(chat, /:conversations="dms"/);
+	assert.match(page, /contacts\.recentHint/);
+	assert.match(page, /contacts\.emptyRecent/);
+	assert.match(page, /contacts-page__group-label/);
+	assert.match(page, /contacts-page__unread/);
+	assert.match(page, /lastTalkLabel\(user\)/);
+	assert.match(page, /contacts\.today/);
+	assert.match(page, /contacts\.earlier/);
+});

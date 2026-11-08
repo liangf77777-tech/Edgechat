@@ -126,10 +126,25 @@ if (typeof window !== 'undefined') {
   });
 }
 
-router.beforeEach(async (to, from) => {
-  if (!store.ready) {
-    await store.initialize();
+// 会话恢复到海外边缘的弱网链路上可能要十几秒甚至超时。守卫最多等
+// 2 秒就放行：有本地凭据时乐观进入聊天页，后台校验成功则无缝继续，返回 401
+// 则由 api 层派发 auth-invalid 回到登录页。无限等待过去会让手机永远停在
+// 「加载中」或反复弹回登录页，而桌面浏览器因为链路快从不触发。
+async function waitForInitialization() {
+  if (store.ready) return;
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(resolve, 2000);
+  });
+  try {
+    await Promise.race([store.initialize(), timeout]).catch(() => {});
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
+}
+
+router.beforeEach(async (to, from) => {
+  await waitForInitialization();
 
   if (to.meta.public) {
     if (!isDemoMode && store.session && to.path === '/login') {
@@ -139,7 +154,7 @@ router.beforeEach(async (to, from) => {
   }
 
   if (!store.session) {
-    return '/login';
+    return store.hasCredentials ? true : '/login';
   }
 
   if (to.meta.admin) {

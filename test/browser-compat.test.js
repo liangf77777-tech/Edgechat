@@ -12,7 +12,7 @@ const compatSource = await readFile(compatPath, 'utf8');
  * MediaQueryList.addEventListener / visualViewport，localStorage 一访问就抛错。
  * 这正是线上复现出白屏的组合。
  */
-function createLegacySandbox({ supportsModule = true, brokenStorage = true } = {}) {
+function createLegacySandbox({ supportsModule = true, brokenStorage = true, legacyAbortSignal = false } = {}) {
   const timers = [];
   const listeners = {};
   const styleProps = {};
@@ -96,6 +96,14 @@ function createLegacySandbox({ supportsModule = true, brokenStorage = true } = {
   } else {
     sandbox.localStorage = null;
     sandbox.sessionStorage = null;
+  }
+
+  if (legacyAbortSignal) {
+    // iOS 15.6 / Android WebView 100：有 AbortController，但没有静态
+    // AbortSignal.timeout。api.session() 过去会在这里同步抛 TypeError。
+    sandbox.AbortController = AbortController;
+    function LegacyAbortSignal() {}
+    sandbox.AbortSignal = LegacyAbortSignal;
   }
 
   const context = vm.createContext(sandbox);
@@ -243,4 +251,28 @@ test('兼容层可重复执行且不会破坏现代浏览器已有的 API', () =
   assert.equal(probe(context, "'a_b'.replaceAll('_', '-')"), 'a-b');
   assert.equal(probe(context, "localStorage.setItem('x','1') || localStorage.getItem('x')"), '1');
   assert.equal(probe(context, "window.__edgechatCompatInstalled"), true);
+});
+
+test('缺 AbortSignal.timeout 的老内核仍能生成可中止的请求信号', () => {
+  const env = createLegacySandbox({ legacyAbortSignal: true });
+  vm.runInContext(compatSource, env.context);
+
+  assert.equal(probe(env.context, 'typeof AbortSignal.timeout'), 'function');
+  probe(env.context, 'globalThis.__edgechatTestSignal = AbortSignal.timeout(12000);');
+  assert.equal(probe(env.context, '__edgechatTestSignal.aborted'), false);
+  // 只推进 12 秒的定时器，确认超时确实会 abort，而不是永不触发。
+  env.flushTimers(12000);
+  assert.equal(probe(env.context, '__edgechatTestSignal.aborted'), true);
+});
+
+test('现代内核已有的 AbortSignal.timeout 不被兼容层覆盖', () => {
+  const env = createLegacySandbox({ brokenStorage: false });
+  env.sandbox.AbortController = AbortController;
+  env.sandbox.AbortSignal = AbortSignal;
+  env.sandbox.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  env.sandbox.sessionStorage = env.sandbox.localStorage;
+  const context = vm.createContext(env.sandbox);
+  const nativeTimeout = env.sandbox.AbortSignal.timeout;
+  vm.runInContext(compatSource, context);
+  assert.equal(probe(context, 'AbortSignal.timeout'), nativeTimeout);
 });

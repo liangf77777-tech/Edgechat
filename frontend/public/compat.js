@@ -82,6 +82,33 @@
     });
   }
 
+  /* ------------------------------------------------------------------ *
+   * 2b. AbortSignal.timeout —— Safari 16 / Chrome 103 才有
+   *
+   * iOS 15.6、Android WebView 100、微信 X5 等老内核都没有这个静态方法。
+   * api.session() / api.getSite() 在启动期直接调用它：缺失时同步抛
+   * TypeError，store 会把异常当成「登录已失效」清空 token，路由守卫随即
+   * 跳回登录页 —— 登录成功后再重复一次，形成「手机永远进不了聊天主界面，
+   * 只有电脑能打开」的死循环。桌面新版浏览器有这个 API，所以不受影响。
+   * ------------------------------------------------------------------ */
+  if (win.AbortController && win.AbortSignal && !isFn(win.AbortSignal.timeout)) {
+    define(win.AbortSignal, 'timeout', function (milliseconds) {
+      var controller = new win.AbortController();
+      var delay = Math.max(0, Number(milliseconds) || 0);
+      win.setTimeout(function () {
+        try {
+          var reason = win.DOMException
+            ? new win.DOMException('The operation timed out.', 'TimeoutError')
+            : undefined;
+          controller.abort(reason);
+        } catch (e) {
+          try { controller.abort(); } catch (ignored) {}
+        }
+      }, delay);
+      return controller.signal;
+    });
+  }
+
   if (!isFn(String.prototype.trimStart)) {
     define(String.prototype, 'trimStart', function () {
       return String(this).replace(/^\s+/, '');
@@ -309,7 +336,7 @@
 
   win.__edgechatBoot = {
     at: new Date().getTime(),
-    compat: '2026-11-08a',
+    compat: '2026-11-08b',
     mounted: false,
     painted: false,
     note: 'boot-trace'
