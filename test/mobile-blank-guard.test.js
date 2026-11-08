@@ -91,6 +91,7 @@ function createSandbox({ withSplash = false, moduleSupport = true } = {}) {
   function makeElement() {
     return {
       children: [],
+      parentNode: null,
       style: { cssText: '' },
       setAttribute() {},
       appendChild(node) {
@@ -100,18 +101,36 @@ function createSandbox({ withSplash = false, moduleSupport = true } = {}) {
     };
   }
 
+  const body = {
+    children: bodyChildren,
+    appendChild(node) {
+      // parentNode 是双向指针，设成不可枚举，避免测试里 JSON.stringify 成环。
+      Object.defineProperty(node, 'parentNode', {
+        value: body,
+        enumerable: false,
+        configurable: true,
+        writable: true
+      });
+      bodyChildren.push(node);
+      return node;
+    },
+    removeChild(node) {
+      const index = bodyChildren.indexOf(node);
+      if (index > -1) bodyChildren.splice(index, 1);
+      node.parentNode = null;
+      return node;
+    }
+  };
+
   const doc = {
     documentElement: {
       clientHeight: 844,
-      style: { setProperty() {}, removeProperty() {} }
-    },
-    body: {
-      children: bodyChildren,
+      style: { setProperty() {}, removeProperty() {} },
       appendChild(node) {
-        bodyChildren.push(node);
-        return node;
+        body.appendChild(node);
       }
     },
+    body,
     getElementById(id) {
       if (id === 'app') return appEl;
       if (id === 'boot-splash' && withSplash) return splashEl;
@@ -157,6 +176,7 @@ function createSandbox({ withSplash = false, moduleSupport = true } = {}) {
     context,
     bodyChildren,
     appEl,
+    listeners,
     flushTimers(maxDelay) {
       const limit = maxDelay === undefined ? Infinity : maxDelay;
       const pending = timers.splice(0, timers.length);
@@ -279,3 +299,59 @@ test('不支持 ES Module 且始终没有界面时，提示升级而不是泛化
   assert.equal(env.bodyChildren.length, 1);
   assert.match(JSON.stringify(env.bodyChildren[0]), /浏览器版本过旧/);
 });
+
+/**
+ * 线上真实故障：@vitejs/plugin-legacy v8 把「浏览器是否支持 import.meta.resolve」
+ * 当成新内核判据，在 index.html 内联 module 与现代包入口 chunk 顶部插入一段
+ * 会主动 throw 的探针。该 API 只有 Chrome 105+ / Safari 16.4+ 才有，于是
+ * iOS 12~16.3、Android WebView < 105、UC/QQ 内核一进页面就被打上
+ * 「页面加载遇到问题」——点清缓存也没用，因为每次都会重新抛。
+ */
+test('构建工具的特性探测抛错不会被当成故障弹卡片', async () => {
+  const source = await readCompat();
+  const env = createSandbox({ withSplash: true });
+  vm.runInContext(source, env.context);
+
+  for (const fn of env.listeners.error || []) {
+    fn({ message: 'Error: import.meta.resolve not supported' });
+  }
+  // 只跑到「错误上报」这一步：看门狗与 12 秒「加载较慢」提示不参与本用例。
+  env.flushTimers(1000);
+
+  assert.equal(env.bodyChildren.length, 0, '探测类抛错不能弹「页面加载遇到问题」');
+  assert.match(String(env.context.__edgechatBoot.ignored), /import\.meta\.resolve/);
+});
+
+test('真实的启动错误仍然给出可操作提示', async () => {
+  const source = await readCompat();
+  const env = createSandbox({ withSplash: true });
+  vm.runInContext(source, env.context);
+
+  for (const fn of env.listeners.error || []) {
+    fn({ message: 'Uncaught TypeError: window.foo is not a function' });
+  }
+  env.flushTimers(200);
+
+  assert.equal(env.bodyChildren.length, 1);
+  assert.match(JSON.stringify(env.bodyChildren[0]), /页面加载遇到问题/);
+});
+
+test('非致命提示在界面画出来后自动退场，不会永久盖住正常页面', async () => {
+  const source = await readCompat();
+  const env = createSandbox({ withSplash: true });
+  vm.runInContext(source, env.context);
+
+  for (const fn of env.listeners.error || []) fn({ message: 'Uncaught TypeError: boom' });
+  env.flushTimers(200);
+  assert.equal(env.bodyChildren.length, 1, '先要看到提示');
+
+  // 备份包（或晚到的现代包）随后把界面渲染出来了。
+  env.appEl.children.push({
+    className: 'login-page',
+    getBoundingClientRect: () => ({ width: 390, height: 844 })
+  });
+  env.flushTimers();
+
+  assert.equal(env.bodyChildren.length, 0, '界面正常后提示必须退场');
+});
+
