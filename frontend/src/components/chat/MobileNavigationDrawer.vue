@@ -1,5 +1,5 @@
 <script setup>
-import { Bell, BellOff, ContactRound, LayoutDashboard, LogOut, MessageCircle, Settings, X } from '@lucide/vue';
+import { Bell, BellOff, ContactRound, LayoutDashboard, LogOut, MessageCircle, Settings, Volume2, VolumeX, X } from '@lucide/vue';
 import { ref, toRef } from 'vue';
 import { useOverlayLifecycle } from '../../composables/useOverlayLifecycle.js';
 import { t } from '../../i18n.js';
@@ -13,10 +13,12 @@ const props = defineProps({
   notificationsEnabled: { type: Boolean, default: false },
   notificationLabel: { type: String, default: '' },
   notificationDisabled: { type: Boolean, default: false },
+  soundEnabled: { type: Boolean, default: true },
+  soundLabel: { type: String, default: '' },
   activeView: { type: String, default: 'chat' }
 });
 
-const emit = defineEmits(['close', 'chat', 'contacts', 'settings', 'admin', 'notification', 'logout']);
+const emit = defineEmits(['close', 'chat', 'contacts', 'settings', 'admin', 'notification', 'sound', 'logout']);
 const drawerEl = ref(null);
 
 useOverlayLifecycle({
@@ -73,14 +75,15 @@ useOverlayLifecycle({
               <BellOff v-else :size="21" aria-hidden="true" />
               <span>{{ notificationLabel }}</span>
             </button>
+            <button type="button" :aria-pressed="soundEnabled" @click="emit('sound')">
+              <Volume2 v-if="soundEnabled" :size="21" aria-hidden="true" />
+              <VolumeX v-else :size="21" aria-hidden="true" />
+              <span>{{ soundLabel }}</span>
+            </button>
             <button v-if="showAdmin" type="button" @click="emit('admin')">
               <LayoutDashboard :size="21" aria-hidden="true" />
               <span>{{ t('nav.admin') }}</span>
             </button>
-            <a href="https://github.com/aozorae/Edgechat" target="_blank" rel="noopener noreferrer">
-              <img src="/github.svg" width="21" height="21" alt="" />
-              <span>{{ t('nav.githubRepository') }}</span>
-            </a>
             <button type="button" class="mobile-navigation-drawer__danger" @click="emit('logout')">
               <LogOut :size="21" aria-hidden="true" />
               <span>{{ t('auth.signOut') }}</span>

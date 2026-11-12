@@ -224,6 +224,8 @@ CREATE TABLE IF NOT EXISTS messages (
   bridge_target_revision INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   deleted_at TEXT,
+  recalled_at TEXT,
+  recalled_by INTEGER,
   CHECK (
     (sender_kind = 'local' AND sender_id IS NOT NULL)
     OR (sender_kind = 'external' AND sender_id IS NULL)
@@ -231,6 +233,21 @@ CREATE TABLE IF NOT EXISTS messages (
   FOREIGN KEY (channel_id) REFERENCES channels(id),
   FOREIGN KEY (sender_id) REFERENCES users(id)
 );
+
+-- 好友备注按「我的视角」存储，只影响自己对对方的显示名，互不可见。
+CREATE TABLE IF NOT EXISTS contact_aliases (
+  owner_id INTEGER NOT NULL,
+  contact_id INTEGER NOT NULL,
+  alias TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (owner_id, contact_id),
+  CHECK (owner_id != contact_id),
+  FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (contact_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_aliases_contact
+  ON contact_aliases(contact_id, owner_id);
 
 CREATE TABLE IF NOT EXISTS user_blocks (
   blocker_id INTEGER NOT NULL,

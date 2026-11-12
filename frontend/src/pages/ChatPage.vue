@@ -1,5 +1,5 @@
 <script setup>
-import { ArrowLeft, Ban, Bell, BellOff, ContactRound, Menu, MessageCircle, Phone, Settings, UsersRound } from '@lucide/vue';
+import { ArrowLeft, Ban, Bell, BellOff, ContactRound, Menu, MessageCircle, Phone, Settings, UsersRound, Volume2, VolumeX } from '@lucide/vue';
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -27,6 +27,7 @@ import { useConversationFlow } from '../composables/useConversationFlow.ts';
 import { useConversationCreation } from '../composables/useConversationCreation.js';
 import { useInAppNotifications } from '../composables/useInAppNotifications.ts';
 import { useMessageContextMenu } from '../composables/useMessageContextMenu.ts';
+import { useMessageSound } from '../composables/useMessageSound.js';
 import { useRoomManagement } from '../composables/useRoomManagement.js';
 import { useUnreadInbox } from '../composables/useUnreadInbox.js';
 import { useUserBlock } from '../composables/useUserBlock.ts';
@@ -64,6 +65,7 @@ const showMobileNavigation = ref(false);
 const publicGroupPreview = ref(null);
 const joiningPublicGroup = ref(false);
 const session = computed(() => store.session);
+const isSiteAdmin = computed(() => Boolean(session.value?.isSuperAdmin || session.value?.isAdmin));
 const showAdminEntry = computed(() => Boolean(session.value?.canAccessAdmin));
 const isContactsView = computed(() => route.name === 'contacts');
 const contactsVisited = ref(isContactsView.value);
@@ -119,11 +121,21 @@ const {
   dismissInAppNotification,
   clearInAppNotifications
 } = useInAppNotifications();
+const { soundEnabled, toggleSound, playMessageSound } = useMessageSound();
 
 function notifyInAppRoom(event) {
   if (!shouldNotifyRoom(event)) return false;
+  playMessageSound();
   showInAppNotification(event);
   return true;
+}
+
+// 页面在后台时应用内提示不可见，系统通知也要带上提示音。
+// playMessageSound 自带 700ms 限流，两个回调同时触发不会连响两次。
+function notifyRoomWithSound(event) {
+  const result = notifyRoom(event);
+  if (result) playMessageSound();
+  return result;
 }
 
 function openInAppNotification(notification) {
@@ -161,7 +173,7 @@ function handleRoomAccessRevoked(room) {
 const {
   messages, pinnedMessage, highlightedMessageId, loading, refreshing, refreshFailed, wsStatus, composerText, pendingAttachments, sending,
   messagesEl,
-	  loadMessages, activateRoom, deactivateRoom, pauseRoom, disconnectSocket, sendMessage, sendVoiceMessage, deleteMessage,
+	  loadMessages, activateRoom, deactivateRoom, pauseRoom, disconnectSocket, sendMessage, sendVoiceMessage, deleteMessage, recallMessage,
 	  pinMessage, unpinMessage, revealPinnedMessage,
 	  revealMessage,
   uploadAttachment, clearAttachment, retryAttachment, retryMessage, loadOlder
@@ -185,15 +197,14 @@ const { connectUnreadInbox, disconnectUnreadInbox } = useUnreadInbox({
   markConversationRead,
   applyConversationActivity,
   notifyInApp: notifyInAppRoom,
-  notifySystem: notifyRoom,
+  notifySystem: notifyRoomWithSound,
   onCallEvent: voiceCall.receive
 });
 
 const wsConnected = computed(() => wsStatus.value === 'open');
 const activeRoomSubtitle = computed(() => roomSubtitle(activeRoom.value, wsConnected.value));
-const canModerateMessages = computed(
-  () => Boolean(activeRoom.value?.kind !== 'dm' && canManageActiveRoom.value)
-);
+// 撤回与双向删除属于管理动作，仅站点管理员可用。
+const canModerateMessages = computed(() => Boolean(isSiteAdmin.value));
 const canPinMessages = computed(
   () => Boolean(activeRoom.value?.kind !== 'dm' && canManageActiveRoom.value)
 );
@@ -450,6 +461,15 @@ function confirmDeleteMessage() {
   deleteMessage(message.id);
 }
 
+function confirmRecallMessage() {
+  const message = messageMenu.value.message;
+  closeMessageMenu();
+  if (!message || !window.confirm(t('messages.recallConfirm'))) {
+    return;
+  }
+  recallMessage(message.id);
+}
+
 function pinSelectedMessage() {
   const message = messageMenu.value.message;
   closeMessageMenu();
@@ -590,6 +610,18 @@ watch(
             <span class="right-sidebar-action__label">{{ notificationStateLabel }}</span>
           </button>
           <button
+            type="button"
+            class="right-sidebar-action right-sidebar-action--labeled tooltip"
+            :data-tooltip="t('settings.messageSoundDescription')"
+            :aria-label="t('settings.messageSound')"
+            :aria-pressed="soundEnabled"
+            @click="toggleSound"
+          >
+            <Volume2 v-if="soundEnabled" :size="20" aria-hidden="true" />
+            <VolumeX v-else :size="20" aria-hidden="true" />
+            <span class="right-sidebar-action__label">{{ t('settings.messageSound') }}</span>
+          </button>
+          <button
             v-if="showAdminEntry"
             type="button"
             class="right-sidebar-action right-sidebar-action--admin tooltip"
@@ -635,17 +667,6 @@ watch(
           </button>
           <h1 class="brand-title">EdgeChat</h1>
           <div class="sidebar-header-actions">
-            <a
-              class="header-action header-action--github"
-              href="https://github.com/aozorae/Edgechat"
-              target="_blank"
-              rel="noopener noreferrer"
-              :title="t('nav.githubRepository')"
-              :aria-label="t('nav.openGithubRepository')"
-            >
-              <img src="/github.svg" alt="" width="20" height="20" />
-              <span class="sr-only">{{ t('nav.openGithubRepository') }}</span>
-            </a>
             <button
               type="button"
               class="header-action header-action--primary"
@@ -832,14 +853,16 @@ watch(
           :x="messageMenu.x"
           :y="messageMenu.y"
 		  :can-pin="canPinMessages"
-			  :can-delete="canModerateMessages"
-			  :can-copy="Boolean(messageMenu.message?.content)"
+		  :can-delete="canModerateMessages"
+		  :can-recall="isSiteAdmin"
+		  :can-copy="Boolean(messageMenu.message?.content)"
 			  :pinned="selectedMessageIsPinned"
 			  @close="closeMessageMenu"
 			  @copy="copySelectedMessage"
 			  @reply="replyToSelectedMessage"
           @pin="pinSelectedMessage"
           @unpin="unpinSelectedMessage"
+          @recall="confirmRecallMessage"
           @delete="confirmDeleteMessage"
         />
 
@@ -907,6 +930,8 @@ watch(
       :notifications-enabled="notificationsEnabled"
       :notification-label="notificationActionLabel"
       :notification-disabled="notificationToggleDisabled"
+      :sound-enabled="soundEnabled"
+      :sound-label="t('settings.messageSound')"
       :active-view="isContactsView ? 'contacts' : 'chat'"
       @close="closeMobileNavigation"
       @chat="navigateFromMobileDrawer(openChat)"
@@ -914,6 +939,7 @@ watch(
       @settings="navigateFromMobileDrawer(openSettings)"
       @admin="navigateFromMobileDrawer(openAdmin)"
       @notification="toggleNotifications"
+      @sound="toggleSound"
       @logout="navigateFromMobileDrawer(logout)"
     />
 
@@ -939,6 +965,7 @@ watch(
       :users="usersWithoutDm"
       :opening-dm-user-id="openingDmUserId"
       :error="error"
+      :is-admin="isSiteAdmin"
       @close="closeAddConversation"
       @create-group="startGroupCreation"
       @open-dm="openDm"
@@ -1623,10 +1650,6 @@ watch(
     flex-basis: 44px;
     width: 44px;
     height: 44px;
-  }
-
-  .header-action--github {
-    display: none;
   }
 
   .sidebar-header-actions {

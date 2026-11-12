@@ -5,6 +5,24 @@ import { messageMarkdownToPlainText } from "../message-markdown.ts";
 
 const STORAGE_KEY_PREFIX = "edgechat:browser-notifications";
 
+// 每条新消息都重新 getRegistration() 会增加一次异步往返，弱网下明显拖慢
+// 提示出现的时间。SW 脚本地址固定，注册对象在本次页面生命周期内可复用。
+let cachedRegistration = null;
+
+function resolveNotificationRegistration(swContainer) {
+  if (cachedRegistration) return Promise.resolve(cachedRegistration);
+  if (typeof swContainer?.getRegistration !== "function") return Promise.resolve(null);
+  return swContainer.getRegistration().then((registration) => {
+    if (
+      registration?.active &&
+      new URL(registration.active.scriptURL).pathname === "/sw.js"
+    ) {
+      cachedRegistration = registration;
+    }
+    return registration;
+  });
+}
+
 export function browserNotificationRoomKey(room) {
 	return room ? `${room.kind}:${Number(room.id)}` : "";
 }
@@ -212,7 +230,7 @@ export function useBrowserNotifications(options = {}) {
 		const swContainer = browserWindow?.navigator?.serviceWorker;
 		if (typeof swContainer?.getRegistration === "function") {
 			// ready 在注册失败时可能永远不完成，不能让通知一直等待它。
-			void swContainer.getRegistration()
+			void resolveNotificationRegistration(swContainer)
 				.then((registration) => {
 					if (
 						!registration?.active ||

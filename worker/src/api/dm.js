@@ -1,5 +1,6 @@
 import { ensureDmChannel } from '../data/dm-provisioning.js';
 import { listAdminDms, listUserDms } from '../data/dm-queries.js';
+import { getContactAlias } from '../data/users.js';
 import { getUserBlockStatus } from '../data/user-blocks.ts';
 import { errorResponse, parseJsonRequest } from '../utils.js';
 import { activeUserSql } from '../user-status.js';
@@ -35,9 +36,10 @@ export function registerDmRoutes(app) {
       return errorResponse('目标用户不存在', 404);
     }
 
-    const [channel, blockStatus] = await Promise.all([
+    const [channel, blockStatus, alias] = await Promise.all([
       ensureDmChannel(c.env.DB, session.userId, targetUserId),
-      getUserBlockStatus(c.env.DB, session.userId, targetUserId)
+      getUserBlockStatus(c.env.DB, session.userId, targetUserId),
+      getContactAlias(c.env.DB, session.userId, targetUserId)
     ]);
     return c.json({
       dm: {
@@ -50,7 +52,8 @@ export function registerDmRoutes(app) {
           displayName: targetUser.results[0].display_name,
           avatarUrl: targetUser.results[0].avatar_key
             ? `/files/${encodeURIComponent(targetUser.results[0].avatar_key)}`
-            : ''
+            : '',
+          alias
         },
         isBlockedByMe: blockStatus.blockedByMe
       }

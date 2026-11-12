@@ -3,6 +3,7 @@ import {
   submitRoomMessageIdempotent
 } from '../message-submission.js';
 import { deleteRoomMessage, MessageDeletionError } from '../message-deletion.js';
+import { recallRoomMessage, MessageRecallError } from '../message-recall.js';
 import {
   MessagePinningError,
   pinRoomMessage,
@@ -232,6 +233,11 @@ export class ChannelRoom {
         this.runAttachmentCleanup(result);
         return Response.json({ ok: true, messageId: result.messageId });
       }
+      if (action?.type === 'recall_message') {
+        const result = await recallRoomMessage(this.env, meta, action);
+        await this.broadcast(result.packet);
+        return Response.json({ ok: true, messageId: result.messageId });
+      }
       if (action?.type === 'pin_message') {
         const result = await pinRoomMessage(this.env, meta, action);
         await this.broadcast(result.packet);
@@ -250,6 +256,7 @@ export class ChannelRoom {
       if (
         error instanceof MessageSubmissionError ||
         error instanceof MessageDeletionError ||
+        error instanceof MessageRecallError ||
         error instanceof MessagePinningError
       ) {
         return Response.json(
@@ -347,7 +354,7 @@ export class ChannelRoom {
       return;
     }
 
-    if (!['send', 'delete_message', 'pin_message', 'unpin_message'].includes(payload.type)) {
+    if (!['send', 'delete_message', 'recall_message', 'pin_message', 'unpin_message'].includes(payload.type)) {
       sendSocketError(ws, 'Unsupported message type');
       return;
     }
@@ -362,6 +369,11 @@ export class ChannelRoom {
         const result = await deleteRoomMessage(this.env, currentMeta, payload);
         await this.broadcast(result.packet);
         this.runAttachmentCleanup(result);
+        return;
+      }
+      if (payload.type === 'recall_message') {
+        const result = await recallRoomMessage(this.env, currentMeta, payload);
+        await this.broadcast(result.packet);
         return;
       }
       if (payload.type === 'pin_message') {
@@ -397,6 +409,7 @@ export class ChannelRoom {
       if (
         error instanceof MessageSubmissionError ||
         error instanceof MessageDeletionError ||
+        error instanceof MessageRecallError ||
         error instanceof MessagePinningError
       ) {
         sendSocketError(ws, error.message, payload.type === 'send' ? payload.clientMessageId : undefined);

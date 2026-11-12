@@ -1,5 +1,5 @@
 <script setup>
-import { Copy, Pin, PinOff, Reply, Trash2 } from '@lucide/vue';
+import { Copy, Pin, PinOff, Reply, RotateCcw, Trash2 } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { t } from '../../i18n.js';
 
@@ -9,14 +9,15 @@ const props = defineProps({
   y: { type: Number, default: 0 },
   canPin: { type: Boolean, default: false },
   canDelete: { type: Boolean, default: false },
+  canRecall: { type: Boolean, default: false },
   canCopy: { type: Boolean, default: false },
   pinned: { type: Boolean, default: false }
 });
-const emit = defineEmits(['close', 'copy', 'reply', 'pin', 'unpin', 'delete']);
+const emit = defineEmits(['close', 'copy', 'reply', 'pin', 'unpin', 'recall', 'delete']);
 
 const menuEl = ref(null);
 const menuHeight = computed(() =>
-  16 + (1 + Number(props.canCopy) + Number(props.canPin) + Number(props.canDelete)) * 40
+  16 + (1 + Number(props.canCopy) + Number(props.canPin) + Number(props.canDelete) + Number(props.canRecall)) * 40
 );
 const menuStyle = computed(() => ({
   left: `${Math.max(8, Math.min(props.x, window.innerWidth - 184))}px`,
@@ -97,6 +98,15 @@ onBeforeUnmount(() => {
           {{ pinned ? t('messages.unpin') : t('messages.pin') }}
         </button>
         <button
+          v-if="canRecall"
+          type="button"
+          role="menuitem"
+          @click="emit('recall')"
+        >
+          <RotateCcw :size="18" :stroke-width="1.8" aria-hidden="true" />
+          {{ t('messages.recall') }}
+        </button>
+        <button
 		  v-if="canDelete"
           class="message-context-menu__danger"
           type="button"
@@ -104,7 +114,7 @@ onBeforeUnmount(() => {
           @click="emit('delete')"
         >
           <Trash2 :size="18" :stroke-width="1.8" aria-hidden="true" />
-          {{ t('messages.delete') }}
+          {{ t('messages.deleteBidirectional') }}
         </button>
       </div>
     </Transition>

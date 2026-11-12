@@ -184,6 +184,16 @@ export default {
   getContacts(options = {}) {
     return request('/contacts', options);
   },
+  searchContacts(query, options = {}) {
+    return request(`/contacts/search?q=${encodeURIComponent(String(query || '').trim())}`, options);
+  },
+  setContactAlias(userId, alias) {
+    return request(`/contacts/${encodeURIComponent(userId)}/alias`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: { alias }
+    });
+  },
   getBlockedUsers(options = {}) {
     return request('/users/blocked', options);
   },

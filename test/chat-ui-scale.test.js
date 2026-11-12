@@ -140,13 +140,13 @@ test("桌面侧栏提供明确的个人设置入口并保留移动端入口", ()
 		assert.match(chatPage, /\.right-sidebar-action__label\s*{[^}]*font-size:\s*11px;/s);
 });
 
-	test("GitHub 仓库入口位于添加人员左侧并复用相同按钮尺寸", () => {
-		const githubLink = chatPage.indexOf('href="https://github.com/aozorae/Edgechat"');
+	test("聊天页头部不再暴露 GitHub 仓库入口，添加人员按钮保持尺寸", () => {
+		// 产品要求移除仓库功能图标；管理员的更新检查能力不受影响。
+		assert.doesNotMatch(chatPage, /href="https:\/\/github\.com\/aozorae\/Edgechat"/);
+		assert.doesNotMatch(chatPage, /src="\/github\.svg"/);
+		assert.doesNotMatch(chatPage, /header-action--github/);
 		const addConversation = chatPage.indexOf(':title="t(\'chat.addPeople\')"');
-	assert.notEqual(githubLink, -1);
-	assert.ok(githubLink < addConversation);
-	assert.match(chatPage, /src="\/github\.svg"/);
-	assert.match(chatPage, /rel="noopener noreferrer"/);
+		assert.notEqual(addConversation, -1);
 
 	const headerAction = getStyleRule(chatPage, ".header-action");
 		assert.match(headerAction, /flex:\s*0 0 var\(--chat-control\);/);

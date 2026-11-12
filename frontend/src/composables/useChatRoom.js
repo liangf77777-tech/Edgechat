@@ -211,6 +211,24 @@ export function useChatRoom({
 					: message);
 			if (Number(pinnedMessage.value?.id) === messageId) pinnedMessage.value = null;
 		}
+		if (payload.type === "message_recalled") {
+			const messageId = Number(payload.messageId);
+			// 撤回保留占位行：清空原文/附件/引用，只留时间与「已撤回」提示。
+			messages.value = messages.value.map((message) =>
+				Number(message.id) === messageId
+					? {
+						...message,
+						recalled: true,
+						recalledAt: new Date().toISOString(),
+						content: "",
+						attachment: null,
+						mentions: [],
+						replyTo: null,
+						replyToMessageId: null,
+					}
+					: message);
+			if (Number(pinnedMessage.value?.id) === messageId) pinnedMessage.value = null;
+		}
 		if (payload.type === "message_pinned" && payload.message) {
 			pinnedMessage.value = payload.message;
 		}
@@ -256,7 +274,7 @@ export function useChatRoom({
 			if (connection?.key !== roomKey()) {
 				return;
 			}
-			if (["message", "message_deleted", "message_pinned", "message_unpinned"].includes(payload.type)) {
+			if (["message", "message_deleted", "message_recalled", "message_pinned", "message_unpinned"].includes(payload.type)) {
 				for (const read of historyReads) read.events.push(payload);
 				applyMessageEvent(payload);
 			}
@@ -476,6 +494,22 @@ export function useChatRoom({
 		);
 	}
 
+	function recallMessage(messageId) {
+		const key = activeRoom.value
+			? `${activeRoom.value.kind}:${activeRoom.value.id}`
+			: "";
+		if (!roomSession.isOpenFor(key)) {
+			error.value = t('chat.realtimeNotReady');
+			return false;
+		}
+
+		error.value = "";
+		return roomSession.send(
+			JSON.stringify({ type: "recall_message", messageId: Number(messageId) }),
+			key,
+		);
+	}
+
 	function pinMessage(messageId) {
 		const key = roomKey();
 		if (!roomSession.isOpenFor(key)) {
@@ -599,6 +633,7 @@ export function useChatRoom({
 		retryMessage,
 		sendVoiceMessage,
 		deleteMessage,
+		recallMessage,
 		pinMessage,
 		unpinMessage,
 		revealMessage,

@@ -24,9 +24,10 @@ function createHarness(isAdmin = false) {
 		DB: createD1Adapter(database),
 		FILES: { async delete(key) { deletedFiles.push(key); } },
 	};
+	const session = { userId: 1, displayName: "Owner", isAdmin };
 	const app = new Hono();
 	app.use("*", async (c, next) => {
-		c.set("session", { userId: 1, displayName: "Owner", isAdmin });
+		c.set("session", session);
 		await next();
 	});
 	app.onError((error, c) => c.json(
@@ -36,12 +37,22 @@ function createHarness(isAdmin = false) {
 	registerChannelRoutes(app);
 	return {
 		database, env, deletedFiles,
-		async request(path, method, payload) {
-			return app.fetch(new Request(`https://example.com${path}`, {
-				method,
-				headers: { "content-type": "application/json" },
-				...(payload ? { body: JSON.stringify(payload) } : {}),
-			}), env);
+		// 建群现在只允许站点管理员；测试关注的是硬删除，按需临时提权，
+		// 请求结束后还原，保证「普通成员删除被拒绝」等断言仍按原身份执行。
+		async request(path, method, payload, { asSiteAdmin = false } = {}) {
+			const hadSuperAdmin = Object.prototype.hasOwnProperty.call(session, "isSuperAdmin");
+			const previous = session.isSuperAdmin;
+			if (asSiteAdmin) session.isSuperAdmin = true;
+			try {
+				return await app.fetch(new Request(`https://example.com${path}`, {
+					method,
+					headers: { "content-type": "application/json" },
+					...(payload ? { body: JSON.stringify(payload) } : {}),
+				}), env);
+			} finally {
+				if (asSiteAdmin && !hadSuperAdmin) delete session.isSuperAdmin;
+				else if (asSiteAdmin) session.isSuperAdmin = previous;
+			}
 		},
 	};
 }
@@ -53,7 +64,7 @@ function count(database, table, where = "1") {
 async function createGroup(harness, name = "重建群", kind = "private") {
 	const response = await harness.request("/api/channels", "POST", {
 		name, kind, memberUserIds: [2],
-	});
+	}, { asSiteAdmin: true });
 	assert.equal(response.status, 200);
 	return (await response.json()).channel.id;
 }
@@ -82,7 +93,7 @@ for (const kind of ["public", "private"]) {
 			const { database, env } = harness;
 			const id = await createGroup(harness, "重建群", kind);
 			addRelatedRecords(database, id);
-			const duplicate = await harness.request("/api/channels", "POST", { name: "重建群", kind });
+			const duplicate = await harness.request("/api/channels", "POST", { name: "重建群", kind }, { asSiteAdmin: true });
 			assert.equal(duplicate.status, 400);
 			assert.deepEqual(await duplicate.json(), { error: "群组名称已存在" });
 

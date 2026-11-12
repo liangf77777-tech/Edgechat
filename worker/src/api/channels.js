@@ -72,6 +72,10 @@ export function registerChannelRoutes(app) {
 
   app.post('/api/channels', async (c) => {
     const session = c.get('session');
+    // 创建群聊是管理动作：前端入口也只对管理员显示，这里做服务端兜底。
+    if (!session.isSuperAdmin && !session.isAdmin) {
+      return errorResponse('只有管理员可以创建群聊', 403);
+    }
     const payload = await parseJsonRequest(c.req.raw);
     const name = String(payload.name || '').trim();
     const description = String(payload.description || '').trim();

@@ -597,7 +597,26 @@ export default {
   'demo.selectPage': 'Select demo page',
   'demo.reset': 'Reset demo data',
   'demo.star': 'Star on GitHub',
-  'demo.buildMessage': 'Frontend-only demo build'
+  'demo.buildMessage': 'Frontend-only demo build',
+  'conversation.addByUsername': 'Add by username',
+  'conversation.addByUsernameDescription': 'Enter their username to find them and start chatting',
+  'conversation.usernamePlaceholder': 'Enter a username',
+  'conversation.usernameSearchHint': 'Use a full username for an exact match, or a prefix to browse',
+  'conversation.search': 'Search',
+  'conversation.searching': 'Searching…',
+  'conversation.usernameNotFound': 'No user matches that username',
+  'conversation.searchFailed': 'Search failed, please try again',
+  'conversation.add': 'Add',
+  'messages.recall': 'Recall message',
+  'messages.recalledPlaceholder': 'A message was recalled',
+  'messages.recallConfirm': 'Recall this message? Everyone will see a placeholder and it cannot be restored.',
+  'messages.deleteBidirectional': 'Delete for everyone',
+  'contacts.editAlias': 'Edit alias',
+  'contacts.aliasPlaceholder': 'Enter an alias (leave blank to reset)',
+  'contacts.aliasSaved': 'Alias updated',
+  'contacts.aliasFailed': 'Could not save the alias, please retry',
+  'settings.messageSound': 'Message sound',
+  'settings.messageSoundDescription': 'Play a sound when a new message arrives'
 };
 
 export { localizeServerError } from './server-errors/en-US.js';

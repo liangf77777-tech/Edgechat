@@ -58,7 +58,8 @@ test("通讯录仅向已登录用户返回全部有效本地账号摘要", async
 	assert.equal(adminResult.payload.users.some((user) => user.id === 7), true, "拉黑关系不影响目录可见性");
 	assert.equal(memberResult.payload.users.some((user) => user.id === 2), true, "普通用户同样包含本人");
 	for (const user of adminResult.payload.users) {
-		assert.deepEqual(Object.keys(user).sort(), ["avatarUrl", "displayName", "id", "username"]);
+		assert.deepEqual(Object.keys(user).sort(), ["alias", "avatarUrl", "displayName", "id", "username"]);
+		assert.equal(user.alias, "", "未设置备注时返回空字符串");
 	}
 	assert.equal(adminResult.payload.users.some((user) => [3, 4, 6].includes(user.id)), false);
 });

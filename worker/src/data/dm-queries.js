@@ -14,6 +14,7 @@ function mapUserDm(row) {
 			username: row.other_username,
 			displayName: row.other_display_name,
 			avatarUrl: row.other_avatar_key ? publicFileUrl(row.other_avatar_key) : "",
+			alias: row.other_alias ? String(row.other_alias) : "",
 		},
 		isBlockedByMe: Boolean(row.blocked_by_me),
 	};
@@ -38,6 +39,7 @@ export async function listUserDms(db, userId) {
 			   other.username AS other_username,
 			   other.display_name AS other_display_name,
 			   other.avatar_key AS other_avatar_key,
+			   COALESCE(ca.alias, '') AS other_alias,
 			   EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.blocker_id = viewer.user_id AND ub.blocked_id = other.id) AS blocked_by_me,
 			   (SELECT MAX(m.created_at) FROM messages m WHERE m.channel_id = c.id AND m.deleted_at IS NULL) AS last_message_at,
 			   COALESCE(unread.unread_count, 0) AS unread_count,
@@ -47,6 +49,7 @@ export async function listUserDms(db, userId) {
 			 JOIN channel_members peer ON peer.channel_id = c.id AND peer.user_id != viewer.user_id
 			 JOIN users other ON other.id = peer.user_id
 			 LEFT JOIN unread ON unread.channel_id = c.id
+			 LEFT JOIN contact_aliases ca ON ca.owner_id = viewer.user_id AND ca.contact_id = other.id
 			 WHERE c.kind = 'dm' AND c.deleted_at IS NULL AND other.deleted_at IS NULL
 			 ORDER BY last_message_at DESC NULLS LAST, c.id DESC`,
 			)

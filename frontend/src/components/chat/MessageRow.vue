@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Clock3, RotateCw } from "@lucide/vue";
+import { Clock3, RotateCcw, RotateCw } from "@lucide/vue";
 import { formatTime, t } from "../../i18n.js";
 import UiAvatar from "../ui/Avatar.vue";
 import MessageAttachment from "./MessageAttachment.vue";
@@ -46,8 +46,8 @@ const time = computed(() => props.msg.createdAt ? formatTime(props.msg.createdAt
 		<div
 			class="message-bubble"
 			:class="{ 'message-bubble--with-attachment': msg.attachment, 'message-bubble--highlighted': highlighted }"
-			@contextmenu="!msg.sendStatus && emit('contextmenu', $event, msg)"
-			@pointerdown="!msg.sendStatus && emit('long-press', $event, msg)"
+			@contextmenu="!msg.sendStatus && !msg.recalled && emit('contextmenu', $event, msg)"
+			@pointerdown="!msg.sendStatus && !msg.recalled && emit('long-press', $event, msg)"
 			@pointermove="emit('track-press', $event)"
 			@pointerup="emit('cancel-press')"
 			@pointercancel="emit('cancel-press')"
@@ -57,15 +57,21 @@ const time = computed(() => props.msg.createdAt ? formatTime(props.msg.createdAt
 				<SenderTitleBadge :identity="msg.sender" />
 				<SenderSourceBadge :source="msg.sender.source" :instance="msg.sender.sourceInstance" />
 			</div>
-			<MessageReplyPreview
-				v-if="msg.replyTo"
-				class="message-bubble__reply"
-				:reply="msg.replyTo"
-				:clickable="!msg.replyTo.deleted"
-				@reveal="emit('reveal', msg.replyToMessageId)"
-			/>
-			<MessageMarkdown v-if="msg.content" :content="msg.content" :mentions="msg.mentions" :current-user-id="currentUserId" />
-			<MessageAttachment v-if="msg.attachment" :attachment="msg.attachment" />
+			<div v-if="msg.recalled" class="message-recalled" role="status">
+				<RotateCcw :size="14" aria-hidden="true" />
+				<span>{{ t('messages.recalledPlaceholder') }}</span>
+			</div>
+			<template v-else>
+				<MessageReplyPreview
+					v-if="msg.replyTo"
+					class="message-bubble__reply"
+					:reply="msg.replyTo"
+					:clickable="!msg.replyTo.deleted"
+					@reveal="emit('reveal', msg.replyToMessageId)"
+				/>
+				<MessageMarkdown v-if="msg.content" :content="msg.content" :mentions="msg.mentions" :current-user-id="currentUserId" />
+				<MessageAttachment v-if="msg.attachment" :attachment="msg.attachment" />
+			</template>
 			<div v-if="msg.sendStatus" class="message-delivery" role="status">
 				<template v-if="msg.sendStatus === 'pending'"><Clock3 :size="13" /><span>{{ t('chat.messagePending') }}</span></template>
 				<template v-else>
@@ -92,6 +98,15 @@ const time = computed(() => props.msg.createdAt ? formatTime(props.msg.createdAt
   outline: 3px solid rgba(var(--site-brand-rgb, 0, 128, 105), 0.3);
   outline-offset: 3px;
   transition: outline-color 180ms ease;
+}
+.message-recalled {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  color: #8696a0;
+  font-size: 13px;
+  font-style: italic;
 }
 .message-avatar-trigger {
   position: relative;

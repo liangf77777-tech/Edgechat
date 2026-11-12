@@ -251,6 +251,12 @@ export const D1_MIGRATIONS = [
     file: "worker/migrations/2026-10-31-telegram-direct-messages.sql",
     artifacts: ["table:telegram_dm_prompts", "trigger:clear_telegram_prompt_after_rebind"],
   },
+  {
+    id: "2026-11-12-message-recall-and-contact-aliases",
+    file: "worker/migrations/2026-11-12-message-recall-and-contact-aliases.sql",
+    artifacts: ["column:messages.recalled_at", "column:messages.recalled_by",
+      "table:contact_aliases", "index:idx_contact_aliases_contact"],
+  },
 ];
 
 // b3f6855 曾发布、0c13e8f 已撤回的迁移：仅识别历史 ledger，不要求新安装创建废弃表，也不删除旧数据。

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ChevronRight, Menu, MessageCircle, Search, UsersRound, UserRoundCheck } from "@lucide/vue";
-import { computed, onBeforeUnmount, toRef, watch } from "vue";
+import { ChevronRight, Menu, MessageCircle, Pencil, Search, UsersRound, UserRoundCheck } from "@lucide/vue";
+import { computed, onBeforeUnmount, ref, toRef, watch } from "vue";
 import type { UserSummary } from "../../../shared/user-profile.ts";
+import api from "../api.js";
 import UiAvatar from "../components/ui/Avatar.vue";
 import UiButton from "../components/ui/Button.vue";
 import { contactTimeValue, useContacts, type ContactConversation, type ContactEntry } from "../composables/useContacts.ts";
@@ -68,6 +69,42 @@ function lastTalkLabel(user: ContactEntry) {
 async function unblockContact(userId: number) {
 	if (await unblock(userId)) emit("unblocked", userId);
 }
+
+const aliasEditingId = ref<number | null>(null);
+const aliasDraft = ref("");
+const aliasSaving = ref(false);
+const aliasNotice = ref("");
+
+function displayNameOf(user: ContactEntry) {
+	return user.alias || user.displayName || user.username;
+}
+
+function startEditAlias(user: ContactEntry) {
+	aliasEditingId.value = Number(user.id);
+	aliasDraft.value = user.alias || "";
+	aliasNotice.value = "";
+}
+
+function cancelEditAlias() {
+	aliasEditingId.value = null;
+	aliasDraft.value = "";
+}
+
+async function saveAlias(user: ContactEntry) {
+	if (aliasSaving.value) return;
+	aliasSaving.value = true;
+	aliasNotice.value = "";
+	try {
+		const result = await api.setContactAlias(Number(user.id), aliasDraft.value);
+		user.alias = String(result?.alias ?? "");
+		aliasEditingId.value = null;
+		aliasNotice.value = t("contacts.aliasSaved");
+	} catch {
+		aliasNotice.value = t("contacts.aliasFailed");
+	} finally {
+		aliasSaving.value = false;
+	}
+}
 </script>
 
 <template>
@@ -104,6 +141,7 @@ async function unblockContact(userId: number) {
 
     <section class="contacts-page__body" :aria-busy="loading">
       <p v-if="actionError" class="contacts-page__error" role="alert">{{ actionError }}</p>
+      <p v-if="aliasNotice" class="contacts-page__notice" role="status">{{ aliasNotice }}</p>
       <div v-if="loading" class="contacts-page__skeleton" role="status">
         <span class="sr-only">{{ t('contacts.loading') }}</span>
         <div v-for="n in 4" :key="n" class="contacts-page__skeleton-row">
@@ -136,12 +174,39 @@ async function unblockContact(userId: number) {
                   <span v-if="user.unreadCount" class="contacts-page__dot" aria-hidden="true"></span>
                 </span>
                 <span class="contacts-page__identity">
-                  <span>{{ user.displayName || user.username }}</span>
+                  <span>{{ displayNameOf(user) }}</span>
+                  <span v-if="user.alias" class="contacts-page__meta">@{{ user.username }}</span>
                   <span v-if="lastTalkLabel(user)" class="contacts-page__meta">{{ lastTalkLabel(user) }}</span>
                 </span>
                 <span v-if="user.unreadCount" class="contacts-page__unread">{{ user.unreadCount > 99 ? '99+' : user.unreadCount }}</span>
                 <ChevronRight v-if="view !== 'blocked'" :size="17" class="contacts-page__chevron" aria-hidden="true" />
               </button>
+              <button
+                v-if="view !== 'blocked'"
+                type="button"
+                class="contacts-page__alias-toggle"
+                :aria-label="t('contacts.editAlias')"
+                :title="t('contacts.editAlias')"
+                @click="startEditAlias(user)"
+              >
+                <Pencil :size="16" aria-hidden="true" />
+              </button>
+              <form
+                v-if="aliasEditingId === user.id"
+                class="contacts-page__alias-form"
+                @submit.prevent="saveAlias(user)"
+              >
+                <input
+                  v-model="aliasDraft"
+                  type="text"
+                  maxlength="32"
+                  autocomplete="off"
+                  :placeholder="t('contacts.aliasPlaceholder')"
+                  :aria-label="t('contacts.editAlias')"
+                />
+                <button type="submit" :disabled="aliasSaving">{{ t('common.save') }}</button>
+                <button type="button" :disabled="aliasSaving" @click="cancelEditAlias">{{ t('common.cancel') }}</button>
+              </form>
               <button
                 v-if="view === 'blocked'"
                 type="button"
@@ -197,6 +262,77 @@ async function unblockContact(userId: number) {
   color: var(--chat-muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.contacts-page__notice {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--site-selected, #e7f4f1);
+  color: var(--site-brand, #008069);
+  font-size: 13px;
+}
+
+.contacts-page__alias-toggle {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-right: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--chat-muted);
+  cursor: pointer;
+}
+
+.contacts-page__alias-toggle:hover {
+  background: var(--chat-hover);
+  color: var(--site-brand, #008069);
+}
+
+.contacts-page__alias-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 18px 14px 74px;
+}
+
+.contacts-page__alias-form input {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-paper);
+  color: var(--chat-ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.contacts-page__alias-form button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--chat-line);
+  border-radius: 8px;
+  background: var(--chat-paper);
+  color: var(--chat-ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.contacts-page__alias-form button[type="submit"] {
+  border-color: var(--site-brand, #008069);
+  background: var(--site-brand, #008069);
+  color: #fff;
+}
+
+.contacts-page__alias-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .contacts-page__menu {

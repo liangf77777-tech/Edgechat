@@ -116,6 +116,11 @@ export function mapMessage(row, content = row.content, replyTo = null) {
 			deleted: true,
 		};
 	}
+	// 撤回只暴露「谁、什么时候撤回」，原文/附件/引用一律不下发。
+	if (row.recalled_at) {
+		message.recalled = true;
+		message.recalledAt = row.recalled_at;
+	}
 	return message;
 }
 
@@ -136,6 +141,20 @@ export async function externalSenderExists(db, source, senderId) {
 }
 
 async function mapDecryptedMessage(env, row) {
+	// 已撤回的消息直接返回占位投影：不解密原文、不带附件与引用，避免撤回后仍可从接口取回内容。
+	if (row.recalled_at) {
+		return mapMessage(
+			{
+				...row,
+				attachment_key: null,
+				mention_user_ids: "[]",
+				mentions_json: "[]",
+				reply_to_message_id: null,
+			},
+			"",
+			null,
+		);
+	}
 	const content = await decryptMessageContent(env, row.content, {
 		channelId: row.channel_id,
 		senderId: row.sender_id ?? 0,
@@ -175,6 +194,7 @@ const MESSAGE_SELECT = `SELECT
 		  m.external_sender_avatar_url, m.source, m.source_message_id,
 		  m.source_attachment_id, m.source_attachment_unique_id, m.client_message_id,
 			  m.mention_user_ids, m.reply_to_message_id, m.reply_to_sender_id, m.created_at,
+		  m.recalled_at, m.recalled_by,
 		  u.id AS sender_id, u.username AS sender_username,
 		  u.display_name AS sender_display_name, u.avatar_key AS sender_avatar_key,
 		  u.is_super_admin AS sender_is_admin, u.is_disabled AS sender_is_disabled,
@@ -396,6 +416,21 @@ export async function softDeleteMessage(db, { channelId, messageId }) {
 			   AND deleted_at IS NULL`,
 		)
 		.bind(Number(messageId), Number(channelId))
+		.run();
+	return Number(result.meta?.changes || 0) > 0;
+}
+
+export async function recallMessage(db, { channelId, messageId, recalledBy }) {
+	const result = await db
+		.prepare(
+			`UPDATE messages
+			 SET recalled_at = CURRENT_TIMESTAMP, recalled_by = ?
+			 WHERE id = ?
+			   AND channel_id = ?
+			   AND deleted_at IS NULL
+			   AND recalled_at IS NULL`,
+		)
+		.bind(Number(recalledBy), Number(messageId), Number(channelId))
 		.run();
 	return Number(result.meta?.changes || 0) > 0;
 }

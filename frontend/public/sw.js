@@ -100,3 +100,27 @@ self.addEventListener('notificationclick', (event) => {
       }),
   );
 });
+
+// Web Push 兜底：页面全部关闭时，WS 收件箱也随页面销毁；服务端推送仍可
+// 唤醒 Service Worker 显示系统通知。点击后复用上面的 notificationclick 逻辑
+// 把 roomKind/roomId 带回页面，实现后台实时监控与跳转。
+self.addEventListener('push', (event) => {
+  let payload = {};
+  if (event.data) {
+    try {
+      payload = event.data.json() || {};
+    } catch {
+      payload = { body: event.data.text() };
+    }
+  }
+  const title = String(payload.title || 'EdgeChat');
+  const data = payload.data && typeof payload.data === 'object' ? payload.data : {};
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: String(payload.body || ''),
+      tag: String(payload.tag || `edgechat:push:${data.roomKind || ''}:${data.roomId || ''}`),
+      renotify: true,
+      data,
+    }),
+  );
+});

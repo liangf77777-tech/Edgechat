@@ -50,7 +50,7 @@ export function useActiveRoom({ activeRoom }) {
 			return t("chat.noConversationSelected");
 		}
 		if (room.kind === "dm") {
-			return room.otherUser?.displayName || room.name;
+			return room.otherUser?.alias || room.otherUser?.displayName || room.name;
 		}
 		return room.name;
 	}

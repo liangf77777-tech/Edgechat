@@ -670,7 +670,26 @@ export default {
   "demo.selectPage": "選擇演示頁面",
   "demo.reset": "重置演示數據",
   "demo.star": "在 GitHub 上給我們點個 Star",
-  "demo.buildMessage": "純前端演示構建"
+  "demo.buildMessage": "純前端演示構建",
+  "conversation.addByUsername": "依使用者名稱新增好友",
+  "conversation.addByUsernameDescription": "輸入對方的使用者名稱，找到後即可新增並聊天",
+  "conversation.usernamePlaceholder": "請輸入使用者名稱",
+  "conversation.usernameSearchHint": "輸入完整名稱可精確查找，輸入開頭字元可模糊查找",
+  "conversation.search": "搜尋",
+  "conversation.searching": "搜尋中…",
+  "conversation.usernameNotFound": "找不到該使用者名稱對應的帳號",
+  "conversation.searchFailed": "搜尋失敗，請稍後重試",
+  "conversation.add": "新增",
+  "messages.recall": "收回訊息",
+  "messages.recalledPlaceholder": "一則訊息已被收回",
+  "messages.recallConfirm": "確定收回這則訊息嗎？收回後所有成員只會看到佔位提示，且無法復原。",
+  "messages.deleteBidirectional": "雙向刪除",
+  "contacts.editAlias": "修改備註",
+  "contacts.aliasPlaceholder": "輸入備註名稱（留空恢復原名）",
+  "contacts.aliasSaved": "備註已更新",
+  "contacts.aliasFailed": "儲存備註失敗，請重試",
+  "settings.messageSound": "訊息提示音",
+  "settings.messageSoundDescription": "收到新訊息時播放提示音"
 };
 
 export { localizeServerError } from './server-errors/zh-TW.js';

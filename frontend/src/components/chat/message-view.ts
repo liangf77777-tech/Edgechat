@@ -32,6 +32,8 @@ export type MessageView = {
 	sendError?: string;
 	content?: string;
 	createdAt?: string;
+	recalled?: boolean;
+	recalledAt?: string;
 	mentions?: MessageMention[];
 	attachment?: MessageAttachmentView | null;
 	replyToMessageId?: number | string | null;

@@ -18,6 +18,8 @@ export type ContactConversation = {
 export type ContactEntry = UserSummary & {
 	lastMessageAt?: string;
 	unreadCount?: number;
+	/** 我对该好友的备注，只影响自己的显示名。 */
+	alias?: string;
 };
 
 type UseContactsOptions = {

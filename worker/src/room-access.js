@@ -115,10 +115,20 @@ export async function authorizeChannelManagement(db, principal, channelId) {
 	return { ok: true, channel, membership, identity };
 }
 
+// 站点管理员（超管）在 WS 侧叫 isAdmin、REST 侧叫 isSuperAdmin，两者同义。
+// 统一在这里归一化，避免不同入口对同一身份的判定不一致。
+export function isSiteAdminPrincipal(principal) {
+	return Boolean(principal?.isAdmin || principal?.isSuperAdmin);
+}
+
 export async function authorizeMessageModeration(db, principal, kind, roomId) {
 	const access = await authorizeRoom(db, principal, kind, roomId);
 	if (!access.ok) {
 		return access;
+	}
+	// 站点管理员可以双向删除任意会话（含单聊）的消息。
+	if (isSiteAdminPrincipal(principal)) {
+		return { ...access, siteAdmin: true };
 	}
 	if (access.room.kind === "dm") {
 		return { ok: false, reason: ROOM_ACCESS_FAILURE.FORBIDDEN };
@@ -133,4 +143,16 @@ export async function authorizeMessageModeration(db, principal, kind, roomId) {
 		return { ok: false, reason: ROOM_ACCESS_FAILURE.FORBIDDEN };
 	}
 	return { ...access, membership };
+}
+
+// 撤回是管理动作：只允许站点管理员，且必须是该会话成员。
+export async function authorizeMessageRecall(db, principal, kind, roomId) {
+	const access = await authorizeRoom(db, principal, kind, roomId);
+	if (!access.ok) {
+		return access;
+	}
+	if (!isSiteAdminPrincipal(principal)) {
+		return { ok: false, reason: ROOM_ACCESS_FAILURE.FORBIDDEN };
+	}
+	return { ...access, siteAdmin: true };
 }

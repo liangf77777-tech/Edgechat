@@ -112,7 +112,7 @@ test("频道管理只允许管理员或 owner，并拒绝 DM", async () => {
 	});
 });
 
-test("后台身份不授予消息管理权限，私信不可删除且群消息仍须群主", async () => {
+test("站点管理员可双向删除私信，普通成员仍不可管理群消息", async () => {
 	const adminDm = createQueryQueue([[{ id: 8, kind: "dm" }]]);
 	const adminAccess = await authorizeMessageModeration(
 		adminDm.db,
@@ -120,7 +120,8 @@ test("后台身份不授予消息管理权限，私信不可删除且群消息�
 		"dm",
 		8,
 	);
-	assert.equal(adminAccess.ok, false);
+	assert.equal(adminAccess.ok, true);
+	assert.equal(adminAccess.siteAdmin, true);
 	assert.deepEqual(adminDm.calls.map((call) => call.binds), [[8, "dm", 1]]);
 
 	const owner = createQueryQueue([

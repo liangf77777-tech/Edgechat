@@ -55,7 +55,7 @@ test("通讯录页面只渲染头像和一个名字并复用资料卡与工作�
 	const app = read("App.vue");
 	const router = read("router.js");
 	assert.match(page, /<UiAvatar/);
-	assert.match(page, /<span>\{\{ user\.displayName \|\| user\.username \}\}<\/span>/);
+	assert.match(page, /\{\{ displayNameOf\(user\) \}\}/);
 	assert.doesNotMatch(page, /user\.bio|createdAt|lastActive|send-message/);
 	assert.match(page, /@click="emit\('openProfile', user\)"/);
 	assert.match(page, /min-height:\s*80px/);
