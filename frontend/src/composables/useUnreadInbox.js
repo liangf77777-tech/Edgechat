@@ -10,6 +10,8 @@ export function useUnreadInbox({
 	openInboxConnection = connectInboxSocket,
 	notifyInApp = () => {},
 	notifySystem = () => {},
+	// 停留在当前会话时的普通新消息：只给声音提示，不弹应用内卡片。
+	notifyActiveRoom = () => {},
 		onCallEvent = () => {},
 	isPageActive = () =>
 		globalThis.document?.visibilityState === "visible" &&
@@ -48,6 +50,7 @@ export function useUnreadInbox({
 					.markRoomRead(payload.room.kind, payload.room.id, payload.messageId)
 					.catch(() => {});
 				if (needsAttention) notifyInApp(payload);
+				else notifyActiveRoom(payload);
 				return;
 			}
 

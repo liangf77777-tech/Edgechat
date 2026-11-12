@@ -15,6 +15,8 @@ const props = defineProps<{
 	currentUserId?: number;
 	isDirect: boolean;
 	highlighted: boolean;
+	// 管理员可对撤回占位执行双向删除，因此占位行也要允许打开消息菜单。
+	canModerate?: boolean;
 }>();
 const emit = defineEmits<{
 	profile: [sender: MessageSender];
@@ -46,8 +48,8 @@ const time = computed(() => props.msg.createdAt ? formatTime(props.msg.createdAt
 		<div
 			class="message-bubble"
 			:class="{ 'message-bubble--with-attachment': msg.attachment, 'message-bubble--highlighted': highlighted }"
-			@contextmenu="!msg.sendStatus && !msg.recalled && emit('contextmenu', $event, msg)"
-			@pointerdown="!msg.sendStatus && !msg.recalled && emit('long-press', $event, msg)"
+			@contextmenu="!msg.sendStatus && (!msg.recalled || canModerate) && emit('contextmenu', $event, msg)"
+			@pointerdown="!msg.sendStatus && (!msg.recalled || canModerate) && emit('long-press', $event, msg)"
 			@pointermove="emit('track-press', $event)"
 			@pointerup="emit('cancel-press')"
 			@pointercancel="emit('cancel-press')"

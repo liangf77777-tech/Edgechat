@@ -406,6 +406,8 @@ export async function listRoomMessageEvents(env, channelId, afterSequence = 0, l
 	};
 }
 
+// 刻意不排除 recalled_at：撤回占位也是一条可被管理员双向删除的消息。
+// 写入 message_events 的 deleted 触发器会广播给所有端，占位行随之从时间线消失。
 export async function softDeleteMessage(db, { channelId, messageId }) {
 	const result = await db
 		.prepare(

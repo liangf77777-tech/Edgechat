@@ -2,6 +2,9 @@ import { cleanupR2Keys } from "./gc.js";
 import { getMessageDeletionTarget, softDeleteMessage } from "./data/messages.js";
 import { authorizeMessageModeration } from "./room-access.js";
 
+// 双向删除覆盖会话内任意消息，包括已撤回后只剩占位提示的那一行。
+// 因此下游 persistDeletion 的 WHERE 条件只能排除 deleted_at，
+// 不要加 recalled_at IS NULL：管理员必须能把占位提示本身也清掉。
 export class MessageDeletionError extends Error {
 	constructor(message) {
 		super(message);

@@ -10,7 +10,8 @@ import {
 	searchContactsByUsername,
 	setContactAlias,
 } from "../worker/src/data/users.js";
-import { recallMessage } from "../worker/src/data/messages.js";
+import { recallMessage, softDeleteMessage } from "../worker/src/data/messages.js";
+import { createMessageDeletion } from "../worker/src/message-deletion.js";
 import {
 	createMessageRecall,
 	MessageRecallError,
@@ -144,6 +145,23 @@ test("新功能前后端与部署产物接线完整", () => {
 	assert.match(read(".github/scripts/d1-migration-manifest.mjs"), /2026-11-12-message-recall-and-contact-aliases/);
 	assert.match(read("worker/schema.sql"), /contact_aliases/);
 	assert.match(read("worker/schema.sql"), /recalled_at TEXT/);
+	// 撤回占位也能被管理员双向删除：渲染层、菜单、数据层都要接线。
+	const row = read("frontend/src/components/chat/MessageRow.vue");
+	assert.match(row, /canModerate/);
+	assert.match(row, /!msg\.recalled \|\| canModerate/);
+	assert.match(read("frontend/src/components/chat/MessageList.vue"), /:can-moderate="canModerate"/);
+	assert.match(menu, /recalled: \{ type: Boolean/);
+	const chatPageSource = read("frontend/src/pages/ChatPage.vue");
+	assert.match(chatPageSource, /:can-moderate="canModerateMessages"/);
+	assert.match(chatPageSource, /:recalled="Boolean\(messageMenu\.message\?\.recalled\)"/);
+	assert.match(read("worker/src/data/messages.js"), /不排除 recalled_at/);
+	// 实时接收与提示音自愈链路。
+	assert.match(read("frontend/src/realtime-session.js"), /!\[1000, 4401, 4403\]/);
+	assert.match(read("frontend/src/composables/useChatRoom.js"), /onRecover/);
+	assert.match(chatPageSource, /visibilitychange/);
+	assert.match(chatPageSource, /unlockSoundOnGesture/);
+	assert.match(read("frontend/src/composables/useUnreadInbox.js"), /notifyActiveRoom/);
+	assert.match(read("frontend/src/composables/useMessageSound.js"), /unlockMessageSound/);
 	for (const locale of ["zh-CN", "zh-TW", "en-US"]) {
 		assert.match(read(`frontend/src/locales/${locale}.js`), /conversation\.addByUsername/);
 		assert.match(read(`frontend/src/locales/${locale}.js`), /messages\.recalledPlaceholder/);
@@ -188,4 +206,65 @@ test("消息提示音默认开启、可关闭且连发限流", () => {
 	assert.equal(sound.toggleSound(), false);
 	assert.equal(store.get(MESSAGE_SOUND_STORAGE_KEY), "off");
 	assert.equal(sound.playMessageSound(), false, "关闭后不再播放");
+});
+
+test("管理员可双向删除撤回占位提示并广播删除事件", async () => {
+	const { db, database } = harness();
+	database.run("INSERT INTO channels (id, name, kind, dm_key) VALUES (10, 'dm:1:2', 'dm', '1:2')");
+	database.run("INSERT INTO messages (id, channel_id, sender_id, content) VALUES (51, 10, 2, 'secret')");
+	assert.equal(await recallMessage(db, { channelId: 10, messageId: 51, recalledBy: 1 }), true);
+
+	const deletion = createMessageDeletion({
+		authorize: async () => ({ ok: true, identity: { userId: 1 } }),
+		persistDeletion: softDeleteMessage,
+	});
+	const meta = { principal: { isAdmin: true }, room: { kind: "dm", id: 10 } };
+	const result = await deletion({ DB: db }, meta, { messageId: 51 });
+	assert.equal(result.messageId, 51);
+	assert.equal(JSON.parse(result.packet).type, "message_deleted");
+
+	const row = database.exec("SELECT recalled_at, deleted_at FROM messages WHERE id = 51")[0].values[0];
+	assert.ok(row[0], "撤回标记仍在");
+	assert.ok(row[1], "占位行本身已被双向删除");
+	assert.equal(await softDeleteMessage(db, { channelId: 10, messageId: 51 }), false);
+	const events = database.exec("SELECT event_type FROM message_events WHERE message_id = 51")[0].values;
+	assert.ok(events.some(([type]) => type === "deleted"), "历史同步会向其他端广播删除");
+});
+
+test("AudioContext 未解锁时 resume 完成后才真正发声", async () => {
+	let started = 0;
+	class SuspendedAudioContext {
+		constructor() {
+			this.state = "suspended";
+			this.currentTime = 0;
+			this.destination = {};
+		}
+		createOscillator() {
+			return {
+				type: "",
+				frequency: { value: 0 },
+				connect() {},
+				start() { started += 1; },
+				stop() {},
+			};
+		}
+		createGain() {
+			return {
+				gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+				connect() {},
+			};
+		}
+		resume() {
+			this.state = "running";
+			return Promise.resolve();
+		}
+	}
+	const sound = useMessageSound({
+		storage: { getItem: () => null, setItem() {} },
+		audioContextFactory: () => SuspendedAudioContext,
+	});
+	assert.equal(sound.playMessageSound(), true, "suspended 状态也要尝试播放");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.ok(started >= 2, "resume 后才排程两声提示音");
+	assert.equal(await sound.unlockMessageSound(), true);
 });

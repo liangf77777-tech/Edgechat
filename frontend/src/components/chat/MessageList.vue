@@ -7,6 +7,7 @@ defineProps<{
 	currentUserId?: number;
 	isDirect: boolean;
 	highlightedMessageId: number | null;
+	canModerate?: boolean;
 }>();
 
 // 将列表与草稿、通话计时、菜单等页面状态隔开，避免每次输入都遍历历史消息。
@@ -29,6 +30,7 @@ const emit = defineEmits<{
 		:current-user-id="currentUserId"
 		:is-direct="isDirect"
 		:highlighted="Number(highlightedMessageId) === Number(msg.id)"
+		:can-moderate="canModerate"
 		@profile="emit('profile', $event)"
 		@retry="emit('retry', $event)"
 		@reveal="emit('reveal', $event)"

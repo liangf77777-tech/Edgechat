@@ -181,3 +181,41 @@ test("disconnect 会取消待执行的重连", async () => {
 	assert.equal(harness.sockets.length, 1);
 	assert.equal(session.isOpenFor("room:1"), false);
 });
+
+test("1008 瞬时校验失败仍自动重连", async () => {
+	const harness = createSocketHarness();
+	const session = createRealtimeSession({
+		openConnection: harness.openConnection,
+		reconnectDelays: [0],
+	});
+
+	session.connect("room:1");
+	harness.sockets[0].emitStatus({ status: "open" });
+	harness.sockets[0].emitStatus({
+		status: "closed",
+		code: 1008,
+		reason: "Unauthorized",
+	});
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.equal(harness.sockets.length, 2, "1008 不再把连接永久判死");
+});
+
+test("重连成功后触发 onRecover，用于补拉断连期间的历史", async () => {
+	const harness = createSocketHarness();
+	const recovered = [];
+	const session = createRealtimeSession({
+		openConnection: harness.openConnection,
+		reconnectDelays: [0],
+		onRecover(event) {
+			recovered.push(event.key);
+		},
+	});
+
+	session.connect("room:1");
+	harness.sockets[0].emitStatus({ status: "open" });
+	assert.deepEqual(recovered, [], "首次连接不需要补拉");
+	harness.sockets[0].emitStatus({ status: "closed", code: 1006 });
+	await new Promise((resolve) => setTimeout(resolve, 5));
+	harness.sockets[1].emitStatus({ status: "open" });
+	assert.deepEqual(recovered, ["room:1"]);
+});

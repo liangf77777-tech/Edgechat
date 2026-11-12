@@ -10,6 +10,7 @@ function createInboxHarness({ activeRoom, pageActive }) {
 	const apiRead = [];
 	const inAppNotifications = [];
 	const systemNotifications = [];
+	const activeRoomSounds = [];
 	let handlers;
 	const socket = {
 		readyState: 1,
@@ -41,6 +42,9 @@ function createInboxHarness({ activeRoom, pageActive }) {
 		notifySystem(room) {
 			systemNotifications.push(room);
 		},
+		notifyActiveRoom(room) {
+			activeRoomSounds.push(room);
+		},
 		isPageActive: () => pageActive,
 	});
 	inbox.connectUnreadInbox();
@@ -50,6 +54,7 @@ function createInboxHarness({ activeRoom, pageActive }) {
 		apiRead,
 		inAppNotifications,
 		systemNotifications,
+		activeRoomSounds,
 		emit(payload) {
 			handlers.onMessage(JSON.stringify(payload), socket);
 		},
@@ -66,18 +71,20 @@ const messagePayload = {
 	mentionsMe: true,
 };
 
-test("前台当前会话的普通消息直接标记已读且不提示", () => {
+test("前台当前会话的普通消息标记已读并给声音提示", () => {
 	const harness = createInboxHarness({
 		activeRoom: ref({ kind: "private", id: "2" }),
 		pageActive: true,
 	});
-	harness.emit({ ...messagePayload, mentionsMe: false, mentionUnreadCount: 0 });
+	const payload = { ...messagePayload, mentionsMe: false, mentionUnreadCount: 0 };
+	harness.emit(payload);
 
 	assert.deepEqual(harness.read, [{ kind: "private", roomId: 2 }]);
 	assert.deepEqual(harness.apiRead, [
 		{ kind: "private", roomId: 2, messageId: 18 },
 	]);
 	assert.deepEqual(harness.activity, []);
+	assert.deepEqual(harness.activeRoomSounds, [payload], "停留在聊天窗口收消息也要响");
 	assert.deepEqual(harness.inAppNotifications, []);
 	assert.deepEqual(harness.systemNotifications, []);
 });
@@ -96,6 +103,7 @@ test("前台当前会话的提及和回复仍显示应用内通知", () => {
 		{ ...messagePayload, mentionsMe: false, replyToMe: true },
 	]);
 	assert.deepEqual(harness.systemNotifications, []);
+	assert.deepEqual(harness.activeRoomSounds, [], "提及/回复已由应用内通知带声音，不重复触发");
 });
 
 test("前台其他会话保留未读并显示应用内通知", () => {

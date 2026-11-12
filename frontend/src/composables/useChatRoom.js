@@ -191,9 +191,10 @@ export function useChatRoom({
 			handleRoomAccessRevoked(event.key);
 		}
 		if (code === 1008 && reason === "Unauthorized") {
-			// ChannelRoom's legacy close does not distinguish a lost login from lost membership.
-			snapshots.clear();
-			handleRoomAccessRevoked(event.key);
+			// 后端用 1008 表示单次会话校验失败，可能只是 KV 抖动或续期竞态。
+			// 交给自动重连自愈，真正的登出/撤权由 4401 / 4403 /
+			// authorization_changed 处理；一次抖动就清空房间会让 WS 永久静默。
+			return;
 		}
 	}
 
@@ -240,8 +241,28 @@ export function useChatRoom({
 
 	function applyHistory(payload, read, append) {
 		outbox.confirm(roomKey(), payload.messages);
-		// Replace cached history so edits/deletions made while away cannot survive a refresh.
-		messages.value = append ? mergeMessages(payload.messages, messages.value) : payload.messages;
+		const history = payload.messages || [];
+		if (append) {
+			messages.value = mergeMessages(history, messages.value);
+		} else {
+			// 历史以服务端为准（删除/撤回生效），但不能抹掉 HTTP 在途期间
+			// 已从 WebSocket 到达的新消息，否则用户要刷新才能看到它们。
+			const historyIds = new Set(history.map((item) => String(item.id)));
+			const newestHistoryId = history.reduce(
+				(max, item) => Math.max(max, Number(item.id) || 0),
+				0,
+			);
+			// 只保留「请求发出后才从 WS 到达」的新消息；请求前就在内存里的
+			// 旧消息（例如快照恢复）仍以服务端历史为准。
+			const knownIds = read.knownIds || new Set();
+			const liveNewer = messages.value.filter((item) =>
+				!item.sendStatus &&
+				!knownIds.has(String(item.id)) &&
+				Number(item.id) > newestHistoryId &&
+				!historyIds.has(String(item.id)),
+			);
+			messages.value = mergeMessages(history, liveNewer);
+		}
 		pinnedMessage.value = payload.pinnedMessage || null;
 		// HTTP may have captured its snapshot before these socket events arrived.
 		for (const event of read.events) applyMessageEvent(event);
@@ -270,6 +291,12 @@ export function useChatRoom({
 			wsStatus.value = event.status === "reconnecting" ? "connecting" : event.status;
 		},
 		onClose: handleSocketClose,
+		// 断连期间服务端广播不补发，重连成功后立刻拉一次历史补齐漏掉的消息。
+		onRecover() {
+			if (activeRoom.value && !disposed && session.value?.userId) {
+				void loadMessages();
+			}
+		},
 		onMessage(payload, connection) {
 			if (connection?.key !== roomKey()) {
 				return;
@@ -296,7 +323,10 @@ export function useChatRoom({
 
 		const generation = ++messageLoadGeneration;
 		const loginGeneration = sessionGeneration;
-		const read = { events: [] };
+		const read = {
+			events: [],
+			knownIds: new Set(messages.value.map((item) => String(item.id))),
+		};
 		historyReads.add(read);
 		loading.value = true;
 		refreshing.value = !append && snapshotReady;
@@ -550,7 +580,10 @@ export function useChatRoom({
 			return true;
 		}
 
-		const read = { events: [] };
+		const read = {
+			events: [],
+			knownIds: new Set(messages.value.map((item) => String(item.id))),
+		};
 		historyReads.add(read);
 		try {
 			const room = activeRoom.value;

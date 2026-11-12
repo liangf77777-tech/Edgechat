@@ -198,7 +198,7 @@ for (const status of [403, 404]) {
 	});
 }
 
-for (const code of [4403, 1008]) {
+for (const code of [4403]) {
 	test(`WS ${code} 撤权使在途历史响应失效且不能恢复快照`, async (t) => {
 		const h = harness(t);
 		await h.visit(1, [message(10)], message(10));
@@ -217,6 +217,18 @@ for (const code of [4403, 1008]) {
 		await retry;
 	});
 }
+
+test("WS 1008 瞬时校验失败只重连，不撤销房间访问", async (t) => {
+	const h = harness(t);
+	await h.visit(1, [message(10)], message(10));
+	h.sockets.at(-1).revoke(1008);
+	assert.equal(h.revoked.length, 0, "1008 不再被当成权限撤销");
+	assert.deepEqual(h.room.messages.value, [message(10)]);
+	const retry = h.activate(1);
+	h.requests.at(-1).resolve({ messages: [message(10), message(11)] });
+	assert.equal(await retry, true);
+	assert.deepEqual(h.room.messages.value.map((item) => item.id), [10, 11]);
+});
 
 test("旧会话的迟到 403 只使该快照失效，不清空当前会话", async (t) => {
 	const h = harness(t);

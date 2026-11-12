@@ -6,7 +6,10 @@ function isSocketOpen(socket) {
 
 function shouldReconnectByDefault(event) {
 	const code = Number(event?.code || 0);
-	return ![1000, 1008, 4401, 4403].includes(code);
+	// 1008 也会被后端用于瞬时会话校验失败（KV 抖动、会话续期竞态），
+	// 它不等于失去访问权限；直接停重连会让页面只能靠刷新恢复接收。
+	// 真正该停下的只有主动关闭与明确的授权/房间拒绝码。
+	return ![1000, 4401, 4403].includes(code);
 }
 
 function frameToText(frame) {
@@ -36,6 +39,7 @@ export function createRealtimeSession({
 	onMessage,
 	onStatus,
 	onClose,
+	onRecover = () => {},
 	shouldReconnect = shouldReconnectByDefault,
 	reconnectDelays = DEFAULT_RECONNECT_DELAYS,
 	parseFrame = parseRealtimeFrame,
@@ -116,7 +120,7 @@ export function createRealtimeSession({
 		}, delay);
 	}
 
-	function handleConnectionStatus(event, socket, generation, key) {
+	function handleConnectionStatus(event, socket, generation, key, reconnecting = false) {
 		if (intentionallyClosingSockets.has(socket)) {
 			if (event.status === "closed") {
 				intentionallyClosingSockets.delete(socket);
@@ -137,6 +141,8 @@ export function createRealtimeSession({
 			reconnectAttempt = 0;
 			flushDeferredSockets(socket);
 			emitStatus({ ...event, key });
+			// 断连期间服务端广播不会补发，重连成功后由调用方拉一次历史补齐时间线。
+			if (reconnecting) onRecover?.({ key });
 			return;
 		}
 
@@ -185,9 +191,9 @@ export function createRealtimeSession({
 					queuedStatuses.push(event);
 					return;
 				}
-				handleConnectionStatus(event, event.socket || socket, generation, key);
-			},
-			onMessage(frame, sourceSocket) {
+			handleConnectionStatus(event, event.socket || socket, generation, key, reconnecting);
+		},
+		onMessage(frame, sourceSocket) {
 				if (!socket) {
 					queuedMessages.push([frame, sourceSocket]);
 					return;
@@ -204,9 +210,9 @@ export function createRealtimeSession({
 		});
 		connectingSocket = socket;
 		connectingKey = key;
-		for (const event of queuedStatuses) {
-			handleConnectionStatus(event, event.socket || socket, generation, key);
-		}
+	for (const event of queuedStatuses) {
+		handleConnectionStatus(event, event.socket || socket, generation, key, reconnecting);
+	}
 		for (const [frame, sourceSocket] of queuedMessages) {
 			if (
 				generation === connectionGeneration &&

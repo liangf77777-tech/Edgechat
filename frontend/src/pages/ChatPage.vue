@@ -121,7 +121,14 @@ const {
   dismissInAppNotification,
   clearInAppNotifications
 } = useInAppNotifications();
-const { soundEnabled, toggleSound, playMessageSound } = useMessageSound();
+const { soundEnabled, toggleSound, playMessageSound, unlockMessageSound } = useMessageSound();
+
+// 开关按钮本身就是用户手势：借它解锁 AudioContext 并给一声试听，
+// 之后 WebSocket 回调里才能正常发声（浏览器自动播放策略要求）。
+function toggleSoundWithPreview() {
+  const enabled = toggleSound();
+  if (enabled) void unlockMessageSound().then(() => playMessageSound());
+}
 
 function notifyInAppRoom(event) {
   if (!shouldNotifyRoom(event)) return false;
@@ -134,7 +141,8 @@ function notifyInAppRoom(event) {
 // playMessageSound 自带 700ms 限流，两个回调同时触发不会连响两次。
 function notifyRoomWithSound(event) {
   const result = notifyRoom(event);
-  if (result) playMessageSound();
+  // 提示音与浏览器通知开关解耦：即使未授权系统通知，也要有声音提示。
+  if (shouldNotifyRoom(event)) playMessageSound();
   return result;
 }
 
@@ -196,9 +204,12 @@ const { connectUnreadInbox, disconnectUnreadInbox } = useUnreadInbox({
   activeRoom: inboxActiveRoom,
   markConversationRead,
   applyConversationActivity,
-  notifyInApp: notifyInAppRoom,
-  notifySystem: notifyRoomWithSound,
-  onCallEvent: voiceCall.receive
+	  notifyInApp: notifyInAppRoom,
+	  notifySystem: notifyRoomWithSound,
+	  notifyActiveRoom: (event) => {
+	    if (shouldNotifyRoom(event)) playMessageSound();
+	  },
+	  onCallEvent: voiceCall.receive
 });
 
 const wsConnected = computed(() => wsStatus.value === 'open');
@@ -501,10 +512,35 @@ async function copySelectedMessage() {
 	}
 }
 
+// 回前台/窗口重新聚焦时补一次实时链路：WS 可能在后台被系统挂起，
+// 服务端广播不会补发给离线连接，拉一次历史即可补回断连期间的消息。
+let lastRealtimeResumeAt = 0;
+function resumeRealtime() {
+  if (globalThis.document && globalThis.document.visibilityState !== 'visible') return;
+  if (!session.value?.userId) return;
+  const now = Date.now();
+  if (now - lastRealtimeResumeAt < 1500) return;
+  lastRealtimeResumeAt = now;
+  connectUnreadInbox();
+  if (activeRoom.value && !isContactsView.value) {
+    connectSocket();
+    void loadMessages();
+  }
+  void refreshSidebar();
+}
+
+function unlockSoundOnGesture() {
+  void unlockMessageSound();
+}
+
 onMounted(() => {
   window.addEventListener('pagehide', voiceCall.hangup);
   startViewportSync();
   window.addEventListener('focus', syncNotificationPermission);
+  window.addEventListener('focus', resumeRealtime);
+  globalThis.document?.addEventListener?.('visibilitychange', resumeRealtime);
+  window.addEventListener('pointerdown', unlockSoundOnGesture, true);
+  window.addEventListener('keydown', unlockSoundOnGesture, true);
   window.addEventListener(NATIVE_ROOM_OPEN_EVENT, openNativeRoom);
   void bootstrap().then(() => {
     nativeRoomNavigationReady = true;
@@ -520,6 +556,10 @@ onBeforeUnmount(() => {
   cancelMessageLongPress();
   nativeRoomNavigationReady = false;
   window.removeEventListener('focus', syncNotificationPermission);
+  window.removeEventListener('focus', resumeRealtime);
+  globalThis.document?.removeEventListener?.('visibilitychange', resumeRealtime);
+  window.removeEventListener('pointerdown', unlockSoundOnGesture, true);
+  window.removeEventListener('keydown', unlockSoundOnGesture, true);
   window.removeEventListener(NATIVE_ROOM_OPEN_EVENT, openNativeRoom);
   clearInAppNotifications();
   disconnectUnreadInbox();
@@ -615,7 +655,7 @@ watch(
             :data-tooltip="t('settings.messageSoundDescription')"
             :aria-label="t('settings.messageSound')"
             :aria-pressed="soundEnabled"
-            @click="toggleSound"
+            @click="toggleSoundWithPreview"
           >
             <Volume2 v-if="soundEnabled" :size="20" aria-hidden="true" />
             <VolumeX v-else :size="20" aria-hidden="true" />
@@ -838,6 +878,7 @@ watch(
             :current-user-id="session?.userId"
             :is-direct="activeRoom.kind === 'dm'"
             :highlighted-message-id="highlightedMessageId"
+            :can-moderate="canModerateMessages"
             @profile="openSenderProfile"
             @retry="retryMessage"
             @reveal="revealMessage"
@@ -857,6 +898,7 @@ watch(
 		  :can-recall="isSiteAdmin"
 		  :can-copy="Boolean(messageMenu.message?.content)"
 			  :pinned="selectedMessageIsPinned"
+			  :recalled="Boolean(messageMenu.message?.recalled)"
 			  @close="closeMessageMenu"
 			  @copy="copySelectedMessage"
 			  @reply="replyToSelectedMessage"

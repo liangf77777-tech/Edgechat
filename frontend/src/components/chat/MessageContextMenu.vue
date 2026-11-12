@@ -11,14 +11,18 @@ const props = defineProps({
   canDelete: { type: Boolean, default: false },
   canRecall: { type: Boolean, default: false },
   canCopy: { type: Boolean, default: false },
-  pinned: { type: Boolean, default: false }
+  pinned: { type: Boolean, default: false },
+  // 撤回占位只剩「双向删除」一个有效动作，回复/复制/置顶/再次撤回一律隐藏。
+  recalled: { type: Boolean, default: false }
 });
 const emit = defineEmits(['close', 'copy', 'reply', 'pin', 'unpin', 'recall', 'delete']);
 
 const menuEl = ref(null);
-const menuHeight = computed(() =>
-  16 + (1 + Number(props.canCopy) + Number(props.canPin) + Number(props.canDelete) + Number(props.canRecall)) * 40
+const visibleActionCount = computed(() =>
+  (props.recalled ? 0 : 1 + Number(props.canCopy) + Number(props.canPin) + Number(props.canRecall))
+  + Number(props.canDelete)
 );
+const menuHeight = computed(() => 16 + visibleActionCount.value * 40);
 const menuStyle = computed(() => ({
   left: `${Math.max(8, Math.min(props.x, window.innerWidth - 184))}px`,
   top: `${Math.max(8, Math.min(props.y, window.innerHeight - menuHeight.value))}px`
@@ -71,7 +75,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <Transition name="message-menu">
       <div
-        v-if="open"
+        v-if="open && visibleActionCount > 0"
         ref="menuEl"
         class="message-context-menu"
         :style="menuStyle"
@@ -79,16 +83,16 @@ onBeforeUnmount(() => {
         :aria-label="t('messages.actions')"
         @contextmenu.prevent
       >
-		<button type="button" role="menuitem" @click="emit('reply')">
+		<button v-if="!recalled" type="button" role="menuitem" @click="emit('reply')">
 		  <Reply :size="18" :stroke-width="1.8" aria-hidden="true" />
 		  {{ t('messages.reply') }}
 		</button>
-		<button v-if="canCopy" type="button" role="menuitem" @click="emit('copy')">
+		<button v-if="canCopy && !recalled" type="button" role="menuitem" @click="emit('copy')">
 		  <Copy :size="18" :stroke-width="1.8" aria-hidden="true" />
 		  {{ t('messages.copyMarkdown') }}
 		</button>
 	        <button
-          v-if="canPin"
+          v-if="canPin && !recalled"
           type="button"
           role="menuitem"
           @click="emit(pinned ? 'unpin' : 'pin')"
@@ -98,7 +102,7 @@ onBeforeUnmount(() => {
           {{ pinned ? t('messages.unpin') : t('messages.pin') }}
         </button>
         <button
-          v-if="canRecall"
+          v-if="canRecall && !recalled"
           type="button"
           role="menuitem"
           @click="emit('recall')"
